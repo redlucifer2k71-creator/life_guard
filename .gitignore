@@ -1,0 +1,44 @@
+﻿# Sensitive Keys & Credentials
+backend/app/core/firebase-service-account.json
+android/app/google-services.json
+.env
+*.env
+local.properties
+
+# Android & Gradle Build Artifacts
+.gradle/
+build/
+app/build/
+android/build/
+android/app/build/
+*.apk
+*.aab
+*.dex
+
+# Android Studio & IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+*.swp
+
+# Python Caches & Virtualenvs
+__pycache__/
+*/__pycache__/
+*/**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Log & Temporary Files
+*.log
+scratch/
+.tempmediaStorage/
