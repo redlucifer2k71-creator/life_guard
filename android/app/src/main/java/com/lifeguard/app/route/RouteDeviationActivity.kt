@@ -122,27 +122,49 @@ class RouteDeviationActivity : ComponentActivity() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val lat = UserSession.getLastLatitude(this@RouteDeviationActivity)
+                val lng = UserSession.getLastLongitude(this@RouteDeviationActivity)
                 val response = NetworkClient.apiService.triggerAlert(
                     AlertTriggerRequest(
                         userId = userId,
                         alertType = "ROUTE_DEVIATION",
-                        latitude = UserSession.getLastLatitude(this@RouteDeviationActivity),
-                        longitude = UserSession.getLastLongitude(this@RouteDeviationActivity),
+                        latitude = lat,
+                        longitude = lng,
                         radiusMeters = 500.0
                     )
                 )
+                val count = if (response.isSuccessful) response.body()?.totalRecipientsNotified ?: 0 else 0
+
+                // ── Dispatch Emergency SMS to Contact ──
+                com.lifeguard.app.sms.SmsAlertSender.sendEmergencySms(
+                    context = this@RouteDeviationActivity,
+                    alertType = "ROUTE_DEVIATION",
+                    latitude = lat,
+                    longitude = lng,
+                    nearbyHelpersCount = count
+                )
+
                 if (response.isSuccessful) {
-                    val count = response.body()?.totalRecipientsNotified ?: 0
                     CoroutineScope(Dispatchers.Main).launch {
                         Toast.makeText(
                             this@RouteDeviationActivity,
-                            "🆘 Route deviation SOS sent! $count helpers notified",
+                            "🆘 Route deviation SOS sent! $count helpers notified & SMS sent",
                             Toast.LENGTH_LONG
                         ).show()
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send SOS alert", e)
+                // Even on network failure, try sending SMS directly via cellular
+                val lat = UserSession.getLastLatitude(this@RouteDeviationActivity)
+                val lng = UserSession.getLastLongitude(this@RouteDeviationActivity)
+                com.lifeguard.app.sms.SmsAlertSender.sendEmergencySms(
+                    context = this@RouteDeviationActivity,
+                    alertType = "ROUTE_DEVIATION",
+                    latitude = lat,
+                    longitude = lng,
+                    nearbyHelpersCount = 0
+                )
             }
         }
     }

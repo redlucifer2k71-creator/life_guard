@@ -45,49 +45,85 @@ object RouteManager {
         destination: LatLng,
         apiKey: String
     ): RouteResult? = withContext(Dispatchers.IO) {
-        try {
-            val url = "$DIRECTIONS_BASE_URL" +
-                    "?origin=${origin.latitude},${origin.longitude}" +
-                    "&destination=${destination.latitude},${destination.longitude}" +
-                    "&mode=driving" +
-                    "&key=$apiKey"
+        // Try Google Directions first if key is present
+        if (apiKey.isNotBlank() && !apiKey.startsWith("YOUR_")) {
+            try {
+                val url = "$DIRECTIONS_BASE_URL" +
+                        "?origin=${origin.latitude},${origin.longitude}" +
+                        "&destination=${destination.latitude},${destination.longitude}" +
+                        "&mode=driving" +
+                        "&key=$apiKey"
 
-            val request = Request.Builder().url(url).get().build()
+                val request = Request.Builder().url(url).get().build()
+                val response = httpClient.newCall(request).execute()
+
+                if (response.isSuccessful) {
+                    val body = response.body?.string()
+                    if (body != null) {
+                        val directionsResponse = Gson().fromJson(body, DirectionsResponse::class.java)
+                        if (directionsResponse.status == "OK" && directionsResponse.routes.isNotEmpty()) {
+                            val route = directionsResponse.routes[0]
+                            val encodedPolyline = route.overviewPolyline.points
+                            val polylinePoints = decodePolyline(encodedPolyline)
+                            val leg = route.legs.firstOrNull()
+                            val distanceText = leg?.distance?.text ?: "?"
+                            val durationText = leg?.duration?.text ?: "?"
+
+                            Log.i(TAG, "Google Route fetched: $distanceText, $durationText, ${polylinePoints.size} points")
+                            return@withContext RouteResult(
+                                polylinePoints = polylinePoints,
+                                distanceText = distanceText,
+                                durationText = durationText,
+                                encodedPolyline = encodedPolyline
+                            )
+                        } else {
+                            Log.w(TAG, "Google Directions status: ${directionsResponse.status} — falling back to OSRM")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Google Directions API failed: ${e.message} — falling back to OSRM")
+            }
+        }
+
+        // ── Robust Free Fallback: OSRM (Open Source Routing Machine) ──
+        try {
+            val osrmUrl = "https://router.project-osrm.org/route/v1/driving/" +
+                    "${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}" +
+                    "?overview=full&geometries=polyline"
+
+            val request = Request.Builder().url(osrmUrl).get().build()
             val response = httpClient.newCall(request).execute()
 
-            if (!response.isSuccessful) {
-                Log.e(TAG, "Directions API HTTP ${response.code}")
-                return@withContext null
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                if (body != null) {
+                    val osrmResponse = Gson().fromJson(body, OsrmResponse::class.java)
+                    if (osrmResponse.code == "Ok" && osrmResponse.routes.isNotEmpty()) {
+                        val route = osrmResponse.routes[0]
+                        val polylinePoints = decodePolyline(route.geometry)
+
+                        val distKm = route.distance / 1000.0
+                        val distText = if (distKm < 1.0) "${route.distance.toInt()} m" else String.format("%.1f km", distKm)
+
+                        val mins = (route.duration / 60.0).roundToInt()
+                        val durText = if (mins < 60) "$mins mins" else "${mins / 60}h ${mins % 60}m"
+
+                        Log.i(TAG, "OSRM Route fetched: $distText, $durText, ${polylinePoints.size} points")
+                        return@withContext RouteResult(
+                            polylinePoints = polylinePoints,
+                            distanceText = distText,
+                            durationText = durText,
+                            encodedPolyline = route.geometry
+                        )
+                    }
+                }
             }
-
-            val body = response.body?.string() ?: return@withContext null
-            val directionsResponse = Gson().fromJson(body, DirectionsResponse::class.java)
-
-            if (directionsResponse.status != "OK" || directionsResponse.routes.isEmpty()) {
-                Log.e(TAG, "Directions API status: ${directionsResponse.status}")
-                return@withContext null
-            }
-
-            val route = directionsResponse.routes[0]
-            val encodedPolyline = route.overviewPolyline.points
-            val polylinePoints = decodePolyline(encodedPolyline)
-
-            val leg = route.legs.firstOrNull()
-            val distanceText = leg?.distance?.text ?: "?"
-            val durationText = leg?.duration?.text ?: "?"
-
-            Log.i(TAG, "Route fetched: $distanceText, $durationText, ${polylinePoints.size} points")
-
-            RouteResult(
-                polylinePoints = polylinePoints,
-                distanceText = distanceText,
-                durationText = durationText,
-                encodedPolyline = encodedPolyline
-            )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch route", e)
-            null
+            Log.e(TAG, "OSRM fallback failed", e)
         }
+
+        null
     }
 
     // ── Polyline Decoding (Google's encoded polyline algorithm) ──
@@ -234,4 +270,15 @@ data class RouteLeg(
 data class TextValue(
     @SerializedName("text") val text: String,
     @SerializedName("value") val value: Int
+)
+
+data class OsrmResponse(
+    @SerializedName("code") val code: String,
+    @SerializedName("routes") val routes: List<OsrmRoute>
+)
+
+data class OsrmRoute(
+    @SerializedName("geometry") val geometry: String,
+    @SerializedName("distance") val distance: Double,
+    @SerializedName("duration") val duration: Double
 )

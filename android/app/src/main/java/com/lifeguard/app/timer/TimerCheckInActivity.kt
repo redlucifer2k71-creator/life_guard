@@ -104,27 +104,48 @@ class TimerCheckInActivity : ComponentActivity() {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val lat = UserSession.getLastLatitude(this@TimerCheckInActivity)
+                val lng = UserSession.getLastLongitude(this@TimerCheckInActivity)
                 val response = NetworkClient.apiService.triggerAlert(
                     AlertTriggerRequest(
                         userId = userId,
                         alertType = "TIMER_CHECKIN_EXPIRED",
-                        latitude = UserSession.getLastLatitude(this@TimerCheckInActivity),
-                        longitude = UserSession.getLastLongitude(this@TimerCheckInActivity),
+                        latitude = lat,
+                        longitude = lng,
                         radiusMeters = 500.0
                     )
                 )
+                val count = if (response.isSuccessful) response.body()?.totalRecipientsNotified ?: 0 else 0
+
+                // ── Dispatch Emergency SMS to Contact ──
+                com.lifeguard.app.sms.SmsAlertSender.sendEmergencySms(
+                    context = this@TimerCheckInActivity,
+                    alertType = "TIMER_CHECKIN_EXPIRED",
+                    latitude = lat,
+                    longitude = lng,
+                    nearbyHelpersCount = count
+                )
+
                 if (response.isSuccessful) {
-                    val count = response.body()?.totalRecipientsNotified ?: 0
                     CoroutineScope(Dispatchers.Main).launch {
                         Toast.makeText(
                             this@TimerCheckInActivity,
-                            "🆘 SOS sent! $count helpers notified",
+                            "🆘 SOS sent! $count helpers notified & SMS sent",
                             Toast.LENGTH_LONG
                         ).show()
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send SOS alert", e)
+                val lat = UserSession.getLastLatitude(this@TimerCheckInActivity)
+                val lng = UserSession.getLastLongitude(this@TimerCheckInActivity)
+                com.lifeguard.app.sms.SmsAlertSender.sendEmergencySms(
+                    context = this@TimerCheckInActivity,
+                    alertType = "TIMER_CHECKIN_EXPIRED",
+                    latitude = lat,
+                    longitude = lng,
+                    nearbyHelpersCount = 0
+                )
             }
         }
     }

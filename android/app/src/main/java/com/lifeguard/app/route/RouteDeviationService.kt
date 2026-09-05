@@ -192,7 +192,34 @@ class RouteDeviationService : Service() {
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        startActivity(intent)
+
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this,
+            2002,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Show high-priority alert notification with full-screen intent
+        val urgentNotification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("⚠️ Route Deviation Alert!")
+            .setContentText("Tap to enter PIN and cancel emergency SOS")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setFullScreenIntent(pendingIntent, true)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(NOTIFICATION_ID, urgentNotification)
+
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct startActivity deferred by OS: ${e.message}")
+        }
     }
 
     private fun stopMonitoring() {

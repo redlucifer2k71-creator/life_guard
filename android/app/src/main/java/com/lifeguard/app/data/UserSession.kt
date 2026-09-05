@@ -13,6 +13,7 @@ object UserSession {
     private const val KEY_LAST_LAT = "last_latitude"
     private const val KEY_LAST_LNG = "last_longitude"
     private const val KEY_FCM_TOKEN = "fcm_token"
+    private const val KEY_EMERGENCY_CONTACT = "emergency_contact"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -23,6 +24,7 @@ object UserSession {
             .putLong(KEY_USER_ID, user.id)
             .putString(KEY_FULL_NAME, user.fullName)
             .putString(KEY_PHONE, user.phoneNumber)
+            .putString(KEY_EMERGENCY_CONTACT, user.emergencyContactPhone ?: "")
             .putBoolean(KEY_LOGGED_IN, true)
             .apply { if (pinHash.isNotBlank()) putString(KEY_PIN_HASH, pinHash) }
             .apply()
@@ -35,6 +37,13 @@ object UserSession {
 
     fun getPhone(context: Context): String =
         prefs(context).getString(KEY_PHONE, "") ?: ""
+
+    fun getEmergencyContact(context: Context): String =
+        prefs(context).getString(KEY_EMERGENCY_CONTACT, "") ?: ""
+
+    fun setEmergencyContact(context: Context, phone: String) {
+        prefs(context).edit().putString(KEY_EMERGENCY_CONTACT, phone).apply()
+    }
 
     fun isLoggedIn(context: Context): Boolean =
         prefs(context).getBoolean(KEY_LOGGED_IN, false)

@@ -328,6 +328,96 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // ── Emergency Contact Card ──
+        var showContactDialog by remember { mutableStateOf(false) }
+        var currentContact by remember { mutableStateOf(UserSession.getEmergencyContact(context)) }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF1E1E1E),
+            onClick = { showContactDialog = true }
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("📲", fontSize = 20.sp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Emergency Contact SMS",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (currentContact.isNotBlank()) "Alerts SMS to: $currentContact" else "⚠️ Tap to set emergency contact number",
+                            color = if (currentContact.isNotBlank()) Color(0xFF4CAF50) else Color(0xFFFF9800),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                Text("✏️", fontSize = 14.sp)
+            }
+        }
+
+        if (showContactDialog) {
+            var inputPhone by remember { mutableStateOf(currentContact) }
+            AlertDialog(
+                onDismissRequest = { showContactDialog = false },
+                title = { Text("Emergency Contact Number", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text(
+                            "An emergency SMS with your live GPS location will be sent to this number whenever an SOS triggers.",
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = inputPhone,
+                            onValueChange = { inputPhone = it },
+                            label = { Text("Phone Number") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFFD32F2F),
+                                unfocusedBorderColor = Color.Gray
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            UserSession.setEmergencyContact(context, inputPhone.trim())
+                            currentContact = inputPhone.trim()
+                            showContactDialog = false
+                            Toast.makeText(context, "Emergency contact saved!", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                    ) {
+                        Text("SAVE")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showContactDialog = false }) {
+                        Text("Cancel", color = Color(0xFF888888))
+                    }
+                },
+                containerColor = Color(0xFF222222)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // ── Bottom Bar ──
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -523,32 +613,52 @@ private fun verifyPin(context: Context, enteredPin: String): Boolean {
 }
 
 private suspend fun triggerSosAlert(context: Context, userId: Long, alertType: String) {
+    val lat = UserSession.getLastLatitude(context)
+    val lng = UserSession.getLastLongitude(context)
     try {
         val response = NetworkClient.apiService.triggerAlert(
             AlertTriggerRequest(
                 userId = userId,
                 alertType = alertType,
-                latitude = UserSession.getLastLatitude(context),
-                longitude = UserSession.getLastLongitude(context),
+                latitude = lat,
+                longitude = lng,
                 radiusMeters = 500.0
             )
         )
+        val recipientsCount = if (response.isSuccessful) response.body()?.totalRecipientsNotified ?: 0 else 0
+
+        // ── Dispatch Emergency SMS to Contact ──
+        com.lifeguard.app.sms.SmsAlertSender.sendEmergencySms(
+            context = context,
+            alertType = alertType,
+            latitude = lat,
+            longitude = lng,
+            nearbyHelpersCount = recipientsCount
+        )
+
         CoroutineScope(Dispatchers.Main).launch {
             if (response.isSuccessful) {
-                val recipientsCount = response.body()?.totalRecipientsNotified ?: 0
                 Toast.makeText(
                     context,
-                    "🆘 SOS Sent! $recipientsCount nearby helpers notified",
+                    "🆘 SOS Sent! $recipientsCount nearby helpers notified & SMS sent",
                     Toast.LENGTH_LONG
                 ).show()
             } else {
-                Toast.makeText(context, "SOS Failed: ${response.code()}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "SOS alert sent via SMS (Cloud: ${response.code()})", Toast.LENGTH_LONG).show()
             }
         }
     } catch (e: Exception) {
         Log.e(TAG, "SOS trigger error", e)
+        // Send SMS even if internet connection fails
+        com.lifeguard.app.sms.SmsAlertSender.sendEmergencySms(
+            context = context,
+            alertType = alertType,
+            latitude = lat,
+            longitude = lng,
+            nearbyHelpersCount = 0
+        )
         CoroutineScope(Dispatchers.Main).launch {
-            Toast.makeText(context, "Network error sending SOS: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Network offline: Emergency SMS sent directly to contact!", Toast.LENGTH_LONG).show()
         }
     }
 }

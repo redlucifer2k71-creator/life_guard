@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
+import androidx.core.content.ContextCompat
+import com.lifeguard.app.data.UserSession
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -38,15 +40,24 @@ fun RouteScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // Get user's last known location, or fallback to Bangalore
+    val userLat = UserSession.getLastLatitude(context)
+    val userLng = UserSession.getLastLongitude(context)
+    val initialPos = remember {
+        if (userLat != 0.0 && userLng != 0.0) LatLng(userLat, userLng) else DEFAULT_POS
+    }
+
     // Map state
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(DEFAULT_POS, 14f)
+        position = CameraPosition.fromLatLngZoom(initialPos, 15f)
     }
 
     // Route setup state
-    var startPoint by remember { mutableStateOf<LatLng?>(null) }
+    var startPoint by remember {
+        mutableStateOf<LatLng?>(if (userLat != 0.0 && userLng != 0.0) LatLng(userLat, userLng) else null)
+    }
     var endPoint by remember { mutableStateOf<LatLng?>(null) }
-    var placingMode by remember { mutableStateOf("start") } // "start", "end", "done"
+    var placingMode by remember { mutableStateOf(if (startPoint != null) "end" else "start") }
 
     // Route result
     var routePoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
@@ -69,6 +80,13 @@ fun RouteScreen(onBack: () -> Unit) {
         }
     }
 
+    val hasLocationPermission = remember {
+        ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
 
         // ── Google Map ──
@@ -76,13 +94,13 @@ fun RouteScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
             properties = MapProperties(
-                isMyLocationEnabled = false,
+                isMyLocationEnabled = hasLocationPermission,
                 mapType = MapType.NORMAL
             ),
             uiSettings = MapUiSettings(
-                zoomControlsEnabled = false,
-                myLocationButtonEnabled = false,
-                mapToolbarEnabled = false
+                zoomControlsEnabled = true,
+                myLocationButtonEnabled = hasLocationPermission,
+                mapToolbarEnabled = true
             ),
             onMapClick = { latLng ->
                 when (placingMode) {
@@ -311,10 +329,6 @@ fun RouteScreen(onBack: () -> Unit) {
                             Spacer(modifier = Modifier.height(16.dp))
                             Button(
                                 onClick = {
-                                    if (apiKey.isBlank() || apiKey == "YOUR_GOOGLE_MAPS_API_KEY_HERE") {
-                                        Toast.makeText(context, "⚠️ Set your Google Maps API key in AndroidManifest.xml", Toast.LENGTH_LONG).show()
-                                        return@Button
-                                    }
                                     isLoadingRoute = true
                                     scope.launch {
                                         val result = RouteManager.fetchRoute(startPoint!!, endPoint!!, apiKey)
@@ -331,7 +345,7 @@ fun RouteScreen(onBack: () -> Unit) {
                                                 CameraUpdateFactory.newLatLngBounds(bounds.build(), 100)
                                             )
                                         } else {
-                                            Toast.makeText(context, "Failed to fetch route — check API key", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Could not compute route — please re-select points", Toast.LENGTH_LONG).show()
                                         }
                                     }
                                 },
