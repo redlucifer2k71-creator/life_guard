@@ -342,40 +342,127 @@ fun HomeScreen(
 
         // ── Emergency Contact Card ──
         var showContactDialog by remember { mutableStateOf(false) }
+        var showSmsInfoDialog by remember { mutableStateOf(false) }
         var currentContact by remember { mutableStateOf(UserSession.getEmergencyContact(context)) }
+        val hasDirectSms = com.lifeguard.app.sms.SmsAlertSender.isBackgroundSmsPermissionGranted(context)
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF1E1E1E),
-            onClick = { showContactDialog = true }
+            color = Color(0xFF1E1E1E)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("📲", fontSize = 20.sp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Emergency Contact SMS",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (currentContact.isNotBlank()) "Alerts SMS to: $currentContact" else "⚠️ Tap to set emergency contact number",
-                            color = if (currentContact.isNotBlank()) Color(0xFF4CAF50) else Color(0xFFFF9800),
-                            fontSize = 11.sp
-                        )
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("📲", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Emergency Contact SMS",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (currentContact.isNotBlank()) "Alerts to: $currentContact" else "⚠️ No contact set",
+                                color = if (currentContact.isNotBlank()) Color(0xFF4CAF50) else Color(0xFFFF9800),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    IconButton(onClick = { showContactDialog = true }) {
+                        Text("✏️", fontSize = 14.sp)
                     }
                 }
-                Text("✏️", fontSize = 14.sp)
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // SMS Mode Status & Test Button Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (hasDirectSms) Color(0x224CAF50) else Color(0x22FF9800),
+                        onClick = { showSmsInfoDialog = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (hasDirectSms) "🟢 Auto SMS Ready ℹ️" else "🟡 1-Tap SMS Ready ℹ️",
+                                color = if (hasDirectSms) Color(0xFF4CAF50) else Color(0xFFFFB74D),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (currentContact.isBlank()) {
+                                Toast.makeText(context, "Please set an emergency contact number first!", Toast.LENGTH_SHORT).show()
+                                showContactDialog = true
+                            } else {
+                                Toast.makeText(context, "Dispatching test emergency SMS...", Toast.LENGTH_SHORT).show()
+                                com.lifeguard.app.sms.SmsAlertSender.sendTestAlert(context)
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("🧪 Test Alert SMS", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
+        }
+
+        if (showSmsInfoDialog) {
+            AlertDialog(
+                onDismissRequest = { showSmsInfoDialog = false },
+                title = { Text("Emergency SMS Delivery", color = Color.White, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text(
+                            "Life Guard is designed so that your emergency contact ALWAYS receives your distress message and live GPS location:",
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "• 1-Tap Native SMS: If Google Play Protect restricts background SMS for sideloaded apps, Life Guard automatically opens your phone's Messages app with the contact number and live Google Maps distress link pre-filled.\n\n" +
+                            "• Silent Background SMS: To enable 100% silent background SMS without opening Messages:\n" +
+                            "1. Open Android Settings ➔ Apps ➔ Life Guard\n" +
+                            "2. Tap the 3 dots (⋮) in the top-right corner\n" +
+                            "3. Tap 'Allow restricted settings'\n" +
+                            "4. Under Permissions ➔ SMS ➔ select Allow",
+                            color = Color(0xFFAAAAAA),
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showSmsInfoDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                    ) {
+                        Text("GOT IT")
+                    }
+                },
+                containerColor = Color(0xFF222222)
+            )
         }
 
         if (showContactDialog) {

@@ -112,8 +112,8 @@ class MainActivity : ComponentActivity() {
             this, Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        val hasSms = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.SEND_SMS
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
@@ -127,13 +127,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        if (hasFine && hasSms) {
+        if (hasFine || hasCoarse) {
             startLocationService()
         } else {
             val perms = mutableListOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.SEND_SMS
+                Manifest.permission.ACCESS_COARSE_LOCATION
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 perms.add(Manifest.permission.POST_NOTIFICATIONS)

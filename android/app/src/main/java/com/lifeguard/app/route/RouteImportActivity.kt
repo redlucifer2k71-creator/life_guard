@@ -119,7 +119,7 @@ private fun RouteImportDialog(
         val lastLng = UserSession.getLastLongitude(context)
         val fallbackOrigin = if (lastLat != 0.0 && lastLng != 0.0) LatLng(lastLat, lastLng) else null
 
-        val parsed = GoogleMapsUrlParser.parseSharedText(sharedText, fallbackOrigin)
+        val parsed = GoogleMapsUrlParser.parseSharedText(context, sharedText, fallbackOrigin)
         if (parsed == null || parsed.destination == null) {
             errorMsg = "Could not parse Google Maps destination from shared link."
             isLoading = false
