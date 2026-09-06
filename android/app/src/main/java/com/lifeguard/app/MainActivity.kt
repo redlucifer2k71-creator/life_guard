@@ -131,15 +131,20 @@ class MainActivity : ComponentActivity() {
             this, Manifest.permission.SEND_SMS
         ) == PackageManager.PERMISSION_GRANTED
 
+        val hasCall = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.CALL_PHONE
+        ) == PackageManager.PERMISSION_GRANTED
+
         if (hasFine || hasCoarse) {
             startLocationService()
         }
 
-        if (!hasFine || !hasCoarse || !hasSms) {
+        if (!hasFine || !hasCoarse || !hasSms || !hasCall) {
             val perms = mutableListOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.SEND_SMS
+                Manifest.permission.SEND_SMS,
+                Manifest.permission.CALL_PHONE
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 perms.add(Manifest.permission.POST_NOTIFICATIONS)

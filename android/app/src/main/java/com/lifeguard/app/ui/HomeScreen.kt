@@ -452,6 +452,20 @@ fun HomeScreen(
                         }
                     }
 
+                    Text(
+                        text = "📞 Direct Call + 💬 WhatsApp",
+                        color = Color(0xFF81C784),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     OutlinedButton(
                         onClick = {
                             if (currentContact.isBlank()) {
@@ -464,9 +478,52 @@ fun HomeScreen(
                         },
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
-                        modifier = Modifier.height(32.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                     ) {
-                        Text("🧪 Test Alert SMS", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("🧪 SMS", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (currentContact.isBlank()) {
+                                Toast.makeText(context, "Please set an emergency contact number first!", Toast.LENGTH_SHORT).show()
+                                showContactDialog = true
+                            } else {
+                                Toast.makeText(context, "Calling emergency contact...", Toast.LENGTH_SHORT).show()
+                                com.lifeguard.app.sms.SmsAlertSender.testCall(context)
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF4CAF50)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                    ) {
+                        Text("📞 Call", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (currentContact.isBlank()) {
+                                Toast.makeText(context, "Please set an emergency contact number first!", Toast.LENGTH_SHORT).show()
+                                showContactDialog = true
+                            } else {
+                                Toast.makeText(context, "Opening WhatsApp alert...", Toast.LENGTH_SHORT).show()
+                                com.lifeguard.app.sms.SmsAlertSender.testWhatsApp(context)
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF25D366)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(32.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                    ) {
+                        Text("💬 WhatsApp", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -475,22 +532,19 @@ fun HomeScreen(
         if (showSmsInfoDialog) {
             AlertDialog(
                 onDismissRequest = { showSmsInfoDialog = false },
-                title = { Text("Emergency SMS Delivery", color = Color.White, fontWeight = FontWeight.Bold) },
+                title = { Text("Triple-Channel Emergency Dispatch", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
                         Text(
-                            "Life Guard is designed so that your emergency contact ALWAYS receives your distress message and live GPS location:",
+                            "Life Guard uses 3 independent channels to ensure your emergency contact is alerted instantly:",
                             color = Color(0xFFCCCCCC),
                             fontSize = 12.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "• 1-Tap Native SMS: If Google Play Protect restricts background SMS for sideloaded apps, Life Guard automatically opens your phone's Messages app with the contact number and live Google Maps distress link pre-filled.\n\n" +
-                            "• Silent Background SMS: To enable 100% silent background SMS without opening Messages:\n" +
-                            "1. Open Android Settings ➔ Apps ➔ Life Guard\n" +
-                            "2. Tap the 3 dots (⋮) in the top-right corner\n" +
-                            "3. Tap 'Allow restricted settings'\n" +
-                            "4. Under Permissions ➔ SMS ➔ select Allow",
+                            "1. 📞 Automated Emergency Call: Directly dials your emergency contact to catch their immediate attention.\n\n" +
+                            "2. 💬 WhatsApp Live Location: Dispatches your distress message with live Google Maps tracking link directly to their WhatsApp chat.\n\n" +
+                            "3. 📱 Emergency SMS: Dispatched silently in the background (or pre-filled via Messages app if restricted).",
                             color = Color(0xFFAAAAAA),
                             fontSize = 11.sp,
                             lineHeight = 16.sp
