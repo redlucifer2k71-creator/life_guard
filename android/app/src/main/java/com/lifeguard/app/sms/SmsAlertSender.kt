@@ -34,6 +34,16 @@ object SmsAlertSender {
      *    Automatically launches the device's native SMS app with the emergency contact
      *    and SOS message + live GPS link pre-filled (requires ZERO permissions and is NEVER blocked).
      */
+    fun formatPhoneNumber(rawPhone: String): String {
+        val cleaned = rawPhone.replace(Regex("[^0-9+]"), "")
+        return when {
+            cleaned.startsWith("+") -> cleaned
+            cleaned.length == 10 -> "+91$cleaned" // Standard Indian 10-digit mobile format
+            cleaned.length == 12 && cleaned.startsWith("91") -> "+$cleaned"
+            else -> cleaned
+        }
+    }
+
     fun sendEmergencySms(
         context: Context,
         alertType: String,
@@ -41,11 +51,12 @@ object SmsAlertSender {
         longitude: Double,
         nearbyHelpersCount: Int = 0
     ) {
-        val emergencyContact = UserSession.getEmergencyContact(context).trim()
-        if (emergencyContact.isBlank()) {
+        val rawContact = UserSession.getEmergencyContact(context).trim()
+        if (rawContact.isBlank()) {
             Log.w(TAG, "No emergency contact phone set — skipping SMS alert")
             return
         }
+        val emergencyContact = formatPhoneNumber(rawContact)
 
         val userName = UserSession.getFullName(context).ifBlank { "User" }
         val readableAlert = when (alertType) {

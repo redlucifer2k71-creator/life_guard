@@ -162,6 +162,40 @@ object RouteManager {
         return poly
     }
 
+    /**
+     * Encodes a list of LatLng coordinates into Google's polyline string format.
+     */
+    fun encodePolyline(points: List<LatLng>): String {
+        val result = StringBuilder()
+        var lastLat = 0
+        var lastLng = 0
+
+        for (point in points) {
+            val lat = (point.latitude * 1e5).roundToInt()
+            val lng = (point.longitude * 1e5).roundToInt()
+
+            val dLat = lat - lastLat
+            val dLng = lng - lastLng
+
+            encodeValue(dLat, result)
+            encodeValue(dLng, result)
+
+            lastLat = lat
+            lastLng = lng
+        }
+
+        return result.toString()
+    }
+
+    private fun encodeValue(value: Int, result: StringBuilder) {
+        var v = if (value < 0) (value shl 1).inv() else (value shl 1)
+        while (v >= 0x20) {
+            result.append(((0x20 or (v and 0x1f)) + 63).toChar())
+            v = v shr 5
+        }
+        result.append((v + 63).toChar())
+    }
+
     // ── Deviation Detection ──
 
     /**

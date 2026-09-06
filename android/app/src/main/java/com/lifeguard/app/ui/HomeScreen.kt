@@ -131,6 +131,59 @@ fun HomeScreen(
         )
     }
 
+    // ── Route Monitoring Active State & PIN Dialog ──
+    var isRouteMonitoringActive by remember {
+        mutableStateOf(RouteDeviationService.isRouteActive(context))
+    }
+    var showStopRoutePinDialog by remember { mutableStateOf(false) }
+
+    // Re-check route active state when user returns to HomeScreen from Google Maps or RouteImportActivity
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isRouteMonitoringActive = RouteDeviationService.isRouteActive(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    if (showStopRoutePinDialog) {
+        PinChallengeDialog(
+            title = "🛡️ Stop Route Monitoring",
+            subtitle = "Enter your secret PIN to disarm route deviation guard",
+            countdownSeconds = 30,
+            onSuccess = { enteredPin ->
+                showStopRoutePinDialog = false
+                scope.launch {
+                    val verified = verifyPin(context, enteredPin)
+                    if (verified) {
+                        val stopIntent = Intent(context, RouteDeviationService::class.java).apply {
+                            action = RouteDeviationService.ACTION_STOP
+                        }
+                        context.stopService(stopIntent)
+                        RouteDeviationService.clearRoute(context)
+                        isRouteMonitoringActive = false
+                        Toast.makeText(context, "✅ Route monitoring disarmed successfully", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "❌ Invalid PIN — Monitoring remains ACTIVE", Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onFailed = {
+                showStopRoutePinDialog = false
+                Toast.makeText(context, "⚠️ PIN challenge expired or failed — Alerting emergency contact!", Toast.LENGTH_LONG).show()
+                scope.launch {
+                    triggerSosAlert(context, userId, "ROUTE_DEVIATION_STOP_ATTEMPT")
+                }
+            },
+            onDismiss = { showStopRoutePinDialog = false }
+        )
+    }
+
     // --- Main Layout ---
     val scrollState = androidx.compose.foundation.rememberScrollState()
     Column(
@@ -321,20 +374,11 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         // ── Route Deviation Guard Card ──
-        var isRouteMonitoringActive by remember {
-            mutableStateOf(RouteDeviationService.isRouteActive(context))
-        }
-
         RouteGuardCard(
             isRouteActive = isRouteMonitoringActive,
             onOpenMap = onNavigateToRoute,
             onStopMonitoring = {
-                val stopIntent = Intent(context, RouteDeviationService::class.java).apply {
-                    action = RouteDeviationService.ACTION_STOP
-                }
-                context.stopService(stopIntent)
-                isRouteMonitoringActive = false
-                Toast.makeText(context, "Route monitoring stopped", Toast.LENGTH_SHORT).show()
+                showStopRoutePinDialog = true
             }
         )
 
@@ -692,11 +736,16 @@ private fun RouteGuardCard(
             if (isRouteActive) {
                 Button(
                     onClick = onStopMonitoring,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(46.dp)
                 ) {
-                    Text("STOP ROUTE MONITORING", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "🛑 STOP ROUTE DEVIATION (PIN PROTECTED)",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             } else {
                 Row(
@@ -707,17 +756,17 @@ private fun RouteGuardCard(
                         onClick = { com.lifeguard.app.route.GoogleMapsSharingHelper.openGoogleMaps(context) },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
                         shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f).height(40.dp)
+                        modifier = Modifier.weight(1f).height(42.dp)
                     ) {
                         Text("📍 Open Google Maps", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                     OutlinedButton(
                         onClick = onOpenMap,
                         shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF888888)),
-                        modifier = Modifier.height(40.dp)
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFCCCCCC)),
+                        modifier = Modifier.height(42.dp)
                     ) {
-                        Text("In-App Map", fontSize = 11.sp)
+                        Text("🗺️ In-App Map", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

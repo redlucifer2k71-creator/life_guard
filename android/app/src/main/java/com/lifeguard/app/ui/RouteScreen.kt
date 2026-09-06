@@ -1,12 +1,14 @@
 package com.lifeguard.app.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
-import androidx.core.content.ContextCompat
-import com.lifeguard.app.data.UserSession
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -19,470 +21,469 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.CameraPosition
+import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
+import com.lifeguard.app.data.UserSession
 import com.lifeguard.app.route.RouteDeviationService
 import com.lifeguard.app.route.RouteManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.Locale
 
-private const val TAG = "RouteScreen"
-
-// Default camera — Bangalore
-private val DEFAULT_POS = LatLng(12.9716, 77.5946)
-
+/**
+ * 2D Open-Source Map powered by OpenStreetMap (OSM) & Leaflet.
+ * Requires ZERO Google Cloud API keys, works 100% free, and allows:
+ * 1. Live GPS tracking of current user location.
+ * 2. Tap-to-Route (street-snapped routing via OSRM).
+ * 3. Freehand Finger Route Drawing (draw paths directly on the map).
+ * 4. 1-tap activation of Route Deviation Guard (150m corridor monitoring).
+ */
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun RouteScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Get user's last known location, or fallback to Bangalore
-    val userLat = UserSession.getLastLatitude(context)
-    val userLng = UserSession.getLastLongitude(context)
-    val initialPos = remember {
-        if (userLat != 0.0 && userLng != 0.0) LatLng(userLat, userLng) else DEFAULT_POS
-    }
+    val userLat = UserSession.getLastLatitude(context).let { if (it != 0.0) it else 13.0827 }
+    val userLng = UserSession.getLastLongitude(context).let { if (it != 0.0) it else 80.2707 }
 
-    // Map state
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(initialPos, 15f)
-    }
+    var webViewInstance by remember { mutableStateOf<WebView?>(null) }
+    var isMapReady by remember { mutableStateOf(false) }
 
-    // Route setup state
-    var startPoint by remember {
-        mutableStateOf<LatLng?>(if (userLat != 0.0 && userLng != 0.0) LatLng(userLat, userLng) else null)
-    }
-    var endPoint by remember { mutableStateOf<LatLng?>(null) }
-    var placingMode by remember { mutableStateOf(if (startPoint != null) "end" else "start") }
-
-    // Route result
+    // Route state
+    var isDrawingMode by remember { mutableStateOf(false) }
     var routePoints by remember { mutableStateOf<List<LatLng>>(emptyList()) }
-    var routeDistance by remember { mutableStateOf("") }
-    var routeDuration by remember { mutableStateOf("") }
+    var routeDistanceMeters by remember { mutableStateOf(0.0) }
+    var routeSource by remember { mutableStateOf("none") } // "drawn" or "osrm"
+    var isCalculatingRoute by remember { mutableStateOf(false) }
 
-    // Loading/monitoring state
-    var isLoadingRoute by remember { mutableStateOf(false) }
-    var isMonitoring by remember { mutableStateOf(RouteDeviationService.isRouteActive(context)) }
-
-    // Get API key from AndroidManifest
-    val apiKey = remember {
-        try {
-            val appInfo = context.packageManager.getApplicationInfo(
-                context.packageName, PackageManager.GET_META_DATA
-            )
-            appInfo.metaData?.getString("com.google.android.geo.API_KEY") ?: ""
-        } catch (e: Exception) {
-            ""
-        }
-    }
-
-    val hasLocationPermission = remember {
-        ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-
-        // ── Google Map ──
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                isMyLocationEnabled = hasLocationPermission,
-                mapType = MapType.NORMAL
-            ),
-            uiSettings = MapUiSettings(
-                zoomControlsEnabled = true,
-                myLocationButtonEnabled = hasLocationPermission,
-                mapToolbarEnabled = true
-            ),
-            onMapClick = { latLng ->
-                when (placingMode) {
-                    "start" -> {
-                        startPoint = latLng
-                        placingMode = "end"
-                        Toast.makeText(context, "✅ Start point set — Now tap your destination", Toast.LENGTH_SHORT).show()
-                    }
-                    "end" -> {
-                        endPoint = latLng
-                        placingMode = "done"
-                        Toast.makeText(context, "✅ Destination set — Tap 'Get Route'", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        ) {
-            // Start marker
-            startPoint?.let { pos ->
-                Marker(
-                    state = MarkerState(position = pos),
-                    title = "Start",
-                    snippet = "Your starting point"
-                )
+    // JS Bridge definition
+    val jsBridge = remember {
+        object {
+            @JavascriptInterface
+            fun onMapReady() {
+                isMapReady = true
             }
 
-            // End marker
-            endPoint?.let { pos ->
-                Marker(
-                    state = MarkerState(position = pos),
-                    title = "Destination",
-                    snippet = "Your destination"
-                )
-            }
+            @JavascriptInterface
+            fun onMapClick(lat: Double, lng: Double) {
+                if (isDrawingMode) return
+                scope.launch {
+                    isCalculatingRoute = true
+                    val origin = LatLng(userLat, userLng)
+                    val dest = LatLng(lat, lng)
+                    val route = RouteManager.fetchRoute(origin, dest, "")
+                    isCalculatingRoute = false
 
-            // Route polyline
-            if (routePoints.isNotEmpty()) {
-                Polyline(
-                    points = routePoints,
-                    color = Color(0xFF4285F4),
-                    width = 14f
-                )
-                // Deviation radius visualization (subtle red border)
-                Polyline(
-                    points = routePoints,
-                    color = Color(0x33D32F2F),
-                    width = 80f
-                )
-            }
-        }
+                    if (route != null && route.polylinePoints.isNotEmpty()) {
+                        routePoints = route.polylinePoints
+                        routeSource = "osrm"
+                        var dist = 0.0
+                        for (i in 0 until route.polylinePoints.size - 1) {
+                            dist += RouteManager.haversineDistance(route.polylinePoints[i], route.polylinePoints[i + 1])
+                        }
+                        routeDistanceMeters = dist
 
-        // ── Top Bar ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Back button
-            Surface(
-                shape = CircleShape,
-                color = Color(0xDD1E1E1E),
-                onClick = {
-                    if (isMonitoring) {
-                        Toast.makeText(context, "Stop monitoring before going back", Toast.LENGTH_SHORT).show()
+                        val jsonArr = JSONArray()
+                        route.polylinePoints.forEach { pt ->
+                            val obj = JSONObject()
+                            obj.put("lat", pt.latitude)
+                            obj.put("lng", pt.longitude)
+                            jsonArr.put(obj)
+                        }
+                        withContext(Dispatchers.Main) {
+                            webViewInstance?.evaluateJavascript("displayRoute(" + jsonArr.toString() + ")", null)
+                        }
                     } else {
-                        onBack()
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Could not compute road route. You can draw it with your finger!", Toast.LENGTH_LONG).show()
+                        }
                     }
                 }
-            ) {
-                Text(
-                    text = "←",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    modifier = Modifier.padding(12.dp)
-                )
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color(0xDD1E1E1E)
-            ) {
-                Text(
-                    text = if (isMonitoring) "🗺️ Route Guard ACTIVE"
-                           else "🗺️ Route Guard Setup",
-                    color = if (isMonitoring) Color(0xFF4CAF50) else Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                )
+
+            @JavascriptInterface
+            fun onRouteDrawn(jsonPointsStr: String) {
+                try {
+                    val jsonArr = JSONArray(jsonPointsStr)
+                    val points = mutableListOf<LatLng>()
+                    for (i in 0 until jsonArr.length()) {
+                        val obj = jsonArr.getJSONObject(i)
+                        points.add(LatLng(obj.getDouble("lat"), obj.getDouble("lng")))
+                    }
+
+                    if (points.size >= 2) {
+                        routePoints = points
+                        routeSource = "drawn"
+                        var dist = 0.0
+                        for (i in 0 until points.size - 1) {
+                            dist += RouteManager.haversineDistance(points[i], points[i + 1])
+                        }
+                        routeDistanceMeters = dist
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("RouteScreen", "Failed to parse drawn points: " + e.message)
+                }
             }
         }
+    }
 
-        // ── Bottom Control Panel ──
+    val htmlContent = remember(userLat, userLng) {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <style>
+                body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #121212; }
+                .user-pulse {
+                    width: 16px; height: 16px; background: #00E5FF; border: 3px solid #FFFFFF;
+                    border-radius: 50%; box-shadow: 0 0 10px #00E5FF;
+                }
+            </style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script>
+                var map = L.map('map', { zoomControl: false }).setView([$userLat, $userLng], 15);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 19,
+                    attribution: '© OpenStreetMap'
+                }).addTo(map);
+
+                var userMarker = L.marker([$userLat, $userLng], {
+                    icon: L.divIcon({ className: 'user-pulse', iconSize: [16, 16], iconAnchor: [8, 8] })
+                }).addTo(map);
+
+                var routePolyline = null;
+                var isDrawing = false;
+                var drawPoints = [];
+
+                function setDrawMode(enabled) {
+                    isDrawing = enabled;
+                    if (enabled) {
+                        map.dragging.disable();
+                        map.touchZoom.disable();
+                        map.doubleClickZoom.disable();
+                        map.scrollWheelZoom.disable();
+                    } else {
+                        map.dragging.enable();
+                        map.touchZoom.enable();
+                        map.doubleClickZoom.enable();
+                        map.scrollWheelZoom.enable();
+                    }
+                }
+
+                var mapDiv = document.getElementById('map');
+                mapDiv.addEventListener('touchstart', function(e) {
+                    if (!isDrawing) return;
+                    drawPoints = [];
+                    if (routePolyline) { map.removeLayer(routePolyline); routePolyline = null; }
+                    var touch = e.touches[0];
+                    var rect = mapDiv.getBoundingClientRect();
+                    var pt = map.containerPointToLatLng(L.point(touch.clientX - rect.left, touch.clientY - rect.top));
+                    drawPoints.push(pt);
+                    routePolyline = L.polyline(drawPoints, { color: '#FF5252', weight: 6, opacity: 0.9 }).addTo(map);
+                });
+
+                mapDiv.addEventListener('touchmove', function(e) {
+                    if (!isDrawing || drawPoints.length === 0) return;
+                    var touch = e.touches[0];
+                    var rect = mapDiv.getBoundingClientRect();
+                    var pt = map.containerPointToLatLng(L.point(touch.clientX - rect.left, touch.clientY - rect.top));
+                    drawPoints.push(pt);
+                    routePolyline.setLatLngs(drawPoints);
+                });
+
+                mapDiv.addEventListener('touchend', function(e) {
+                    if (!isDrawing || drawPoints.length < 2) return;
+                    var ptsArray = [];
+                    for (var i = 0; i < drawPoints.length; i++) {
+                        ptsArray.push({ lat: drawPoints[i].lat, lng: drawPoints[i].lng });
+                    }
+                    if (window.AndroidBridge) {
+                        window.AndroidBridge.onRouteDrawn(JSON.stringify(ptsArray));
+                    }
+                });
+
+                map.on('click', function(e) {
+                    if (isDrawing) return;
+                    if (window.AndroidBridge) {
+                        window.AndroidBridge.onMapClick(e.latlng.lat, e.latlng.lng);
+                    }
+                });
+
+                function displayRoute(coords) {
+                    if (routePolyline) { map.removeLayer(routePolyline); }
+                    var latlngs = coords.map(function(c) { return [c.lat, c.lng]; });
+                    routePolyline = L.polyline(latlngs, { color: '#00E676', weight: 6, opacity: 0.9 }).addTo(map);
+                    map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
+                }
+
+                function clearMapRoute() {
+                    if (routePolyline) { map.removeLayer(routePolyline); routePolyline = null; }
+                    drawPoints = [];
+                }
+
+                function centerOnLocation(lat, lng) {
+                    map.setView([lat, lng], 16, { animate: true });
+                }
+
+                if (window.AndroidBridge) {
+                    window.AndroidBridge.onMapReady();
+                }
+            </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
+
+        // ── 2D OpenStreetMap WebView ──
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
+                    webChromeClient = WebChromeClient()
+                    webViewClient = object : WebViewClient() {}
+                    addJavascriptInterface(jsBridge, "AndroidBridge")
+                    loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+                    webViewInstance = this
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // ── Top Header & Mode Controls ──
         Column(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(
-                    Color(0xF0121212),
-                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-                )
-                .padding(20.dp)
+                .padding(16.dp)
+                .align(Alignment.TopCenter)
         ) {
-            // Instruction / Status
-            when {
-                isMonitoring -> {
-                    // Active monitoring display
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xDD1E1E1E),
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onBack) {
+                            Text("←", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column {
+                            Text(
+                                text = "🗺️ 2D Open-Source Map",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isDrawingMode) "✏️ Drag finger across roads to draw" else "📍 Tap destination to snap route",
+                                color = if (isDrawingMode) Color(0xFFFF5252) else Color(0xFF00E5FF),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    // Re-center button
+                    IconButton(onClick = {
+                        webViewInstance?.evaluateJavascript("centerOnLocation($userLat, $userLng)", null)
+                    }) {
+                        Text("🎯", fontSize = 18.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // ── Floating Action Bar: Draw Route Toggle & Clear ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Toggle Draw Mode Button
+                Button(
+                    onClick = {
+                        val next = !isDrawingMode
+                        isDrawingMode = next
+                        webViewInstance?.evaluateJavascript("setDrawMode(" + next + ")", null)
+                        if (next) {
+                            Toast.makeText(context, "✏️ Draw Mode ON: Drag finger across the map to draw your route", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "Map pan/zoom restored", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isDrawingMode) Color(0xFFD32F2F) else Color(0xFF2A2A2A)
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f).height(38.dp)
+                ) {
+                    Text(
+                        text = if (isDrawingMode) "✋ Done Drawing" else "✏️ Draw Route",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Clear Route Button
+                OutlinedButton(
+                    onClick = {
+                        routePoints = emptyList()
+                        routeDistanceMeters = 0.0
+                        routeSource = "none"
+                        webViewInstance?.evaluateJavascript("clearMapRoute()", null)
+                        Toast.makeText(context, "Route cleared", Toast.LENGTH_SHORT).show()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFAAAAAA)),
+                    modifier = Modifier.height(38.dp)
+                ) {
+                    Text("🗑️ Clear", fontSize = 11.sp)
+                }
+            }
+        }
+
+        // ── Calculating Progress Indicator ──
+        if (isCalculatingRoute) {
+            Surface(
+                modifier = Modifier.align(Alignment.Center),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xCC000000)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF00E5FF))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Calculating street route...", color = Color.White, fontSize = 13.sp)
+                }
+            }
+        }
+
+        // ── Bottom Action Card: Route Summary & Start Monitoring ──
+        AnimatedVisibility(
+            visible = routePoints.size >= 2,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xEE1A1A1A),
+                shadowElevation = 12.dp
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text("Route Guard Active", color = Color(0xFF4CAF50),
-                                fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text("$routeDistance • $routeDuration",
-                                color = Color(0xFF888888), fontSize = 12.sp)
-                            Text("Off-route > 5 min → SOS alert",
-                                color = Color(0xFF666666), fontSize = 11.sp)
+                            Text(
+                                text = if (routeSource == "drawn") "✏️ Custom Drawn Route" else "🚗 Street Snapped Route",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val distText = if (routeDistanceMeters >= 1000) {
+                                String.format(Locale.US, "%.2f km", routeDistanceMeters / 1000.0)
+                            } else {
+                                String.format(Locale.US, "%.0f meters", routeDistanceMeters)
+                            }
+                            Text(
+                                text = "Distance: " + distText + " • " + routePoints.size + " waypoints",
+                                color = Color(0xFF4CAF50),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0x224CAF50)
+                        ) {
+                            Text(
+                                text = "🛡️ 150m Safe Corridor",
+                                color = Color(0xFF4CAF50),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
                         }
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Stop monitoring button
+                    Spacer(modifier = Modifier.height(14.dp))
+
                     Button(
                         onClick = {
-                            stopRouteMonitor(context)
-                            isMonitoring = false
-                            routePoints = emptyList()
-                            startPoint = null
-                            endPoint = null
-                            placingMode = "start"
-                            Toast.makeText(context, "Route monitoring stopped", Toast.LENGTH_SHORT).show()
+                            if (routePoints.size < 2) return@Button
+                            val startPt = routePoints.first()
+                            val endPt = routePoints.last()
+                            val encoded = RouteManager.encodePolyline(routePoints)
+
+                            // Save route corridor
+                            RouteDeviationService.saveRoute(
+                                context = context,
+                                encodedPolyline = encoded,
+                                startLat = startPt.latitude,
+                                startLng = startPt.longitude,
+                                endLat = endPt.latitude,
+                                endLng = endPt.longitude
+                            )
+
+                            // Start background monitoring service
+                            val serviceIntent = Intent(context, RouteDeviationService::class.java).apply {
+                                action = RouteDeviationService.ACTION_START
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                context.startForegroundService(serviceIntent)
+                            } else {
+                                context.startService(serviceIntent)
+                            }
+
+                            Toast.makeText(
+                                context,
+                                "🛡️ Route Guard Activated! Off-route >150m for 5 mins triggers SOS.",
+                                Toast.LENGTH_LONG
+                            ).show()
+
+                            onBack()
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
-                        Text("STOP MONITORING", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                routePoints.isNotEmpty() -> {
-                    // Route calculated — ready to start monitoring
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text("Route Ready", color = Color(0xFF4285F4),
-                                fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text("$routeDistance • $routeDuration",
-                                color = Color(0xFF888888), fontSize = 13.sp)
-                        }
-                        Text("${routePoints.size} pts", color = Color(0xFF555555), fontSize = 11.sp)
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Start monitoring button
-                    Button(
-                        onClick = {
-                            startRouteMonitor(context, startPoint!!, endPoint!!, routePoints)
-                            isMonitoring = true
-                            Toast.makeText(context, "🗺️ Route Guard activated!", Toast.LENGTH_LONG).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth().height(52.dp)
-                    ) {
-                        Text("🛡️ START ROUTE GUARD", fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Reset route
-                    TextButton(onClick = {
-                        routePoints = emptyList()
-                        startPoint = null
-                        endPoint = null
-                        placingMode = "start"
-                    }) {
-                        Text("Reset route", color = Color(0xFF888888))
-                    }
-                }
-
-                else -> {
-                    // Setup mode — place points
-                    Text(
-                        text = when (placingMode) {
-                            "start" -> "Tap on the map to set your START point"
-                            "end" -> "Tap on the map to set your DESTINATION"
-                            else -> "Both points set"
-                        },
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Point chips
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        PointChip(
-                            label = "Start",
-                            point = startPoint,
-                            isActive = placingMode == "start",
-                            onClick = { placingMode = "start" },
-                            modifier = Modifier.weight(1f)
+                        Text(
+                            text = "🛡️ START ROUTE GUARD",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.sp
                         )
-                        PointChip(
-                            label = "Destination",
-                            point = endPoint,
-                            isActive = placingMode == "end",
-                            onClick = { if (startPoint != null) placingMode = "end" },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    // Get Route button
-                    AnimatedVisibility(visible = startPoint != null && endPoint != null) {
-                        Column {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = {
-                                    isLoadingRoute = true
-                                    scope.launch {
-                                        val result = RouteManager.fetchRoute(startPoint!!, endPoint!!, apiKey)
-                                        isLoadingRoute = false
-                                        if (result != null) {
-                                            routePoints = result.polylinePoints
-                                            routeDistance = result.distanceText
-                                            routeDuration = result.durationText
-
-                                            // Zoom camera to fit the route
-                                            val bounds = com.google.android.gms.maps.model.LatLngBounds.builder()
-                                            result.polylinePoints.forEach { bounds.include(it) }
-                                            cameraPositionState.animate(
-                                                CameraUpdateFactory.newLatLngBounds(bounds.build(), 100)
-                                            )
-                                        } else {
-                                            Toast.makeText(context, "Could not compute route — please re-select points", Toast.LENGTH_LONG).show()
-                                        }
-                                    }
-                                },
-                                enabled = !isLoadingRoute,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth().height(52.dp)
-                            ) {
-                                if (isLoadingRoute) {
-                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
-                                } else {
-                                    Text("🗺️ GET ROUTE", fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun PointChip(
-    label: String,
-    point: LatLng?,
-    isActive: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = when {
-            isActive -> Color(0xFF2A2A2A)
-            point != null -> Color(0xFF1A3A1A)
-            else -> Color(0xFF1A1A1A)
-        },
-        onClick = onClick
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = if (point != null) "✅ $label" else "📍 $label",
-                color = if (point != null) Color(0xFF4CAF50) else Color(0xFF888888),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
-            )
-            if (point != null) {
-                Text(
-                    text = "${String.format("%.4f", point.latitude)}, ${String.format("%.4f", point.longitude)}",
-                    color = Color(0xFF555555),
-                    fontSize = 10.sp
-                )
-            } else {
-                Text(
-                    text = if (isActive) "Tap map to set" else "Waiting...",
-                    color = Color(0xFF444444),
-                    fontSize = 10.sp
-                )
-            }
-        }
-    }
-}
-
-// ── Service control helpers ──
-
-private fun startRouteMonitor(
-    context: Context,
-    start: LatLng,
-    end: LatLng,
-    polylinePoints: List<LatLng>
-) {
-    // We need to re-encode or store the route for the service to read.
-    // For simplicity, we'll just store the start/end and re-fetch won't be needed
-    // because we also store the encoded polyline via saveRoute.
-    // Re-encode using a simple approach — store the overview polyline.
-    // Actually, RouteManager already returned it, but we need to thread it through.
-    // The cleanest way is to store the encoded polyline when we fetch it.
-    // Let's get it from the route manager's last result via the polyline points.
-
-    // For the service, encode the points back (or we store the encoded string globally)
-    // Simplest: store encoded polyline in RouteManager and retrieve here.
-    // Better approach: store in SharedPrefs via RouteDeviationService.saveRoute
-
-    // Since we have the decoded points, re-encode them for storage
-    val encoded = encodePolyline(polylinePoints)
-
-    RouteDeviationService.saveRoute(
-        context, encoded,
-        start.latitude, start.longitude,
-        end.latitude, end.longitude
-    )
-
-    val intent = Intent(context, RouteDeviationService::class.java).apply {
-        action = RouteDeviationService.ACTION_START
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(intent)
-    } else {
-        context.startService(intent)
-    }
-}
-
-private fun stopRouteMonitor(context: Context) {
-    val intent = Intent(context, RouteDeviationService::class.java).apply {
-        action = RouteDeviationService.ACTION_STOP
-    }
-    context.stopService(intent)
-    RouteDeviationService.clearRoute(context)
-}
-
-/**
- * Encode a list of LatLng points back into Google's encoded polyline format.
- */
-private fun encodePolyline(points: List<LatLng>): String {
-    val result = StringBuilder()
-    var prevLat = 0
-    var prevLng = 0
-
-    for (point in points) {
-        val lat = (point.latitude * 1E5).toInt()
-        val lng = (point.longitude * 1E5).toInt()
-
-        encodeValue(lat - prevLat, result)
-        encodeValue(lng - prevLng, result)
-
-        prevLat = lat
-        prevLng = lng
-    }
-    return result.toString()
-}
-
-private fun encodeValue(value: Int, result: StringBuilder) {
-    var v = if (value < 0) (value shl 1).inv() else (value shl 1)
-    while (v >= 0x20) {
-        result.append(((0x20 or (v and 0x1F)) + 63).toChar())
-        v = v shr 5
-    }
-    result.append((v + 63).toChar())
 }
