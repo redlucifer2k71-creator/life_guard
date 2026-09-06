@@ -428,7 +428,9 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // SMS Mode Status & Test Button Row
+                // Auto-Send & SMS Status Row
+                val isAutoSendReady = com.lifeguard.app.service.LifeGuardAccessibilityService.isEnabled(context)
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -444,7 +446,7 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (hasDirectSms) "🟢 Auto SMS Ready ℹ️" else "🟡 1-Tap SMS Ready ℹ️",
+                                text = if (hasDirectSms) "🟢 Auto SMS Ready ℹ️" else "🟡 1-Tap SMS ℹ️",
                                 color = if (hasDirectSms) Color(0xFF4CAF50) else Color(0xFFFFB74D),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -452,12 +454,36 @@ fun HomeScreen(
                         }
                     }
 
-                    Text(
-                        text = "📞 Direct Call + 💬 WhatsApp",
-                        color = Color(0xFF81C784),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isAutoSendReady) Color(0x224CAF50) else Color(0x222196F3),
+                        onClick = {
+                            if (!isAutoSendReady) {
+                                Toast.makeText(context, "Turn ON 'Life Guard' under Installed Apps/Services", Toast.LENGTH_LONG).show()
+                                try {
+                                    context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    })
+                                } catch (e: Exception) {
+                                    Log.e("HomeScreen", "Failed to open accessibility settings: ${e.message}")
+                                }
+                            } else {
+                                Toast.makeText(context, "⚡ Auto-Send is active! WhatsApp & SMS send automatically without touching the screen.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isAutoSendReady) "⚡ Auto-Send: ON" else "⚡ Enable Auto-Send",
+                                color = if (isAutoSendReady) Color(0xFF4CAF50) else Color(0xFF64B5F6),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -512,7 +538,7 @@ fun HomeScreen(
                                 Toast.makeText(context, "Please set an emergency contact number first!", Toast.LENGTH_SHORT).show()
                                 showContactDialog = true
                             } else {
-                                Toast.makeText(context, "Opening WhatsApp alert...", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Dispatching test WhatsApp alert...", Toast.LENGTH_SHORT).show()
                                 com.lifeguard.app.sms.SmsAlertSender.testWhatsApp(context)
                             }
                         },
@@ -532,19 +558,22 @@ fun HomeScreen(
         if (showSmsInfoDialog) {
             AlertDialog(
                 onDismissRequest = { showSmsInfoDialog = false },
-                title = { Text("Triple-Channel Emergency Dispatch", color = Color.White, fontWeight = FontWeight.Bold) },
+                title = { Text("100% Automated SOS Delivery", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
                         Text(
-                            "Life Guard uses 3 independent channels to ensure your emergency contact is alerted instantly:",
+                            "Life Guard provides 3 ways to ensure alerts send completely in the background without needing to tap any buttons:",
                             color = Color(0xFFCCCCCC),
                             fontSize = 12.sp
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "1. 📞 Automated Emergency Call: Directly dials your emergency contact to catch their immediate attention.\n\n" +
-                            "2. 💬 WhatsApp Live Location: Dispatches your distress message with live Google Maps tracking link directly to their WhatsApp chat.\n\n" +
-                            "3. 📱 Emergency SMS: Dispatched silently in the background (or pre-filled via Messages app if restricted).",
+                            "1. ⚡ 0-Click Auto-Send (Recommended):\n" +
+                            "Tap 'Enable Auto-Send' and turn ON Life Guard in Accessibility Settings. When an SOS fires, Life Guard automatically taps Send in ~0.1s and returns to your screen instantly!\n\n" +
+                            "2. 🌐 Silent Cloud WhatsApp:\n" +
+                            "In Emergency Contact settings, enter a free CallMeBot API key. Alerts will be delivered directly to your contact's WhatsApp via internet with ZERO apps opened on your phone!\n\n" +
+                            "3. 📱 Silent Background SMS:\n" +
+                            "Open Settings ➔ Apps ➔ Life Guard ➔ tap the 3 dots (⋮) in top-right ➔ tap 'Allow restricted settings' ➔ Permissions ➔ SMS ➔ Allow.",
                             color = Color(0xFFAAAAAA),
                             fontSize = 11.sp,
                             lineHeight = 16.sp
@@ -565,26 +594,56 @@ fun HomeScreen(
 
         if (showContactDialog) {
             var inputPhone by remember { mutableStateOf(currentContact) }
+            var inputCallMeBotKey by remember { mutableStateOf(UserSession.getCallMeBotApiKey(context)) }
             AlertDialog(
                 onDismissRequest = { showContactDialog = false },
-                title = { Text("Emergency Contact Number", color = Color.White, fontWeight = FontWeight.Bold) },
+                title = { Text("Emergency Contact Settings", color = Color.White, fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
                         Text(
-                            "An emergency SMS with your live GPS location will be sent to this number whenever an SOS triggers.",
+                            "Emergency alerts (Call, WhatsApp & SMS) with live GPS will be sent to this number whenever an SOS triggers.",
                             color = Color(0xFFCCCCCC),
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         OutlinedTextField(
                             value = inputPhone,
                             onValueChange = { inputPhone = it },
                             label = { Text("Phone Number") },
+                            placeholder = { Text("+91 9876543210") },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color.White,
                                 unfocusedTextColor = Color.White,
                                 focusedBorderColor = Color(0xFFD32F2F),
+                                unfocusedBorderColor = Color.Gray
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            "🌐 Silent Cloud WhatsApp (Optional):",
+                            color = Color(0xFF64B5F6),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "For 100% silent WhatsApp delivery without opening WhatsApp on your phone, enter your free CallMeBot API key.",
+                            color = Color(0xFFAAAAAA),
+                            fontSize = 10.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = inputCallMeBotKey,
+                            onValueChange = { inputCallMeBotKey = it },
+                            label = { Text("CallMeBot API Key (Optional)") },
+                            placeholder = { Text("e.g. 1234567") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF2196F3),
                                 unfocusedBorderColor = Color.Gray
                             ),
                             modifier = Modifier.fillMaxWidth()
@@ -595,9 +654,10 @@ fun HomeScreen(
                     Button(
                         onClick = {
                             UserSession.setEmergencyContact(context, inputPhone.trim())
+                            UserSession.setCallMeBotApiKey(context, inputCallMeBotKey.trim())
                             currentContact = inputPhone.trim()
                             showContactDialog = false
-                            Toast.makeText(context, "Emergency contact saved!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Emergency contact settings saved!", Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
                     ) {

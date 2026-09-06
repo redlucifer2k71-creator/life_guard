@@ -158,13 +158,14 @@ object SmsAlertSender {
      */
     fun launchSmsIntent(context: Context, contactPhone: String, messageText: String) {
         try {
+            com.lifeguard.app.service.LifeGuardAccessibilityService.armAutoSend()
             val uri = Uri.parse("smsto:${Uri.encode(contactPhone)}")
             val intent = Intent(Intent.ACTION_SENDTO, uri).apply {
                 putExtra("sms_body", messageText)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
             context.startActivity(intent)
-            Log.i(TAG, "Launched native SMS app with pre-filled distress message for $contactPhone")
+            Log.i(TAG, "Launched native SMS app with auto-send armed for $contactPhone")
         } catch (e: Exception) {
             Log.w(TAG, "ACTION_SENDTO failed, trying generic ACTION_VIEW: ${e.message}")
             try {

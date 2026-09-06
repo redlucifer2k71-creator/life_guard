@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Life Guard</string>
+    <string name="accessibility_service_description">Enables Life Guard to automatically send emergency SOS messages and share live GPS location without requiring manual button presses in critical situations.</string>
+</resources>

@@ -96,12 +96,21 @@ object UserSession {
         com.lifeguard.app.network.NetworkClient.setBaseUrl(trimmed)
     }
 
+    fun getCallMeBotApiKey(context: Context): String =
+        prefs(context).getString("callmebot_api_key", "") ?: ""
+
+    fun setCallMeBotApiKey(context: Context, key: String) {
+        prefs(context).edit().putString("callmebot_api_key", key.trim()).apply()
+    }
+
     fun logout(context: Context) {
         // Preserve onboarding seen flag and server_url across logouts
         val seenOnboarding = hasSeenOnboarding(context)
         val serverUrl = getServerUrl(context)
+        val callmebot = getCallMeBotApiKey(context)
         prefs(context).edit().clear().apply()
         if (seenOnboarding) markOnboardingSeen(context)
         setServerUrl(context, serverUrl)
+        setCallMeBotApiKey(context, callmebot)
     }
 }
