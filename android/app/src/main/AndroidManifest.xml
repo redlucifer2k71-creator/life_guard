@@ -49,16 +49,27 @@
             </intent-filter>
         </activity>
 
-        <!-- Route Import from Google Maps Share Sheet -->
+        <!-- Route Import from Google Maps Share Sheet & Direct Links -->
         <activity
             android:name=".route.RouteImportActivity"
+            android:label="Life Guard"
+            android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:launchMode="singleTop">
-            <intent-filter>
+            <!-- Intercept text shared from Google Maps (Share directions) -->
+            <intent-filter android:label="Life Guard">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- Also handle direct Google Maps links if clicked -->
+            <intent-filter android:label="Life Guard Route">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="maps.app.goo.gl" />
+                <data android:scheme="https" android:host="www.google.com" android:pathPrefix="/maps" />
             </intent-filter>
         </activity>
 

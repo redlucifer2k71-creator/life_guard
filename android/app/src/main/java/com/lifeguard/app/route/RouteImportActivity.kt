@@ -1,4 +1,4 @@
-﻿package com.lifeguard.app.route
+package com.lifeguard.app.route
 
 import android.content.Intent
 import android.os.Build
@@ -34,10 +34,18 @@ class RouteImportActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val sharedText = when {
-            intent?.action == Intent.ACTION_SEND && intent.type == "text/plain" -> {
-                intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+            intent?.action == Intent.ACTION_SEND -> {
+                intent.getStringExtra(Intent.EXTRA_TEXT)
+                    ?: intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+                    ?: intent.dataString
+                    ?: ""
             }
-            else -> ""
+            intent?.action == Intent.ACTION_VIEW -> {
+                intent.dataString ?: intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
+            }
+            else -> {
+                intent?.getStringExtra(Intent.EXTRA_TEXT) ?: intent?.dataString ?: ""
+            }
         }
 
         setContent {
