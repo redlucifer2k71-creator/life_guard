@@ -100,6 +100,7 @@ object SmsAlertSender {
                     smsManager.sendTextMessage(emergencyContact, null, message, null, null)
                 }
                 Log.i(TAG, "Emergency SMS dispatched silently via SmsManager to $emergencyContact")
+                showHelpOnTheWayNotification(context, emergencyContact)
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "SmsManager send failed (${e.message}) — falling back to native SMS app intent", e)
@@ -107,8 +108,32 @@ object SmsAlertSender {
         }
 
         // ── Fallback: Launch native SMS app with pre-filled distress message ──
-        // This bypasses Google Play Protect restrictions completely and guarantees delivery
+        // This guarantees delivery even if background SMS permission is not yet granted
+        showHelpOnTheWayNotification(context, emergencyContact)
         launchSmsIntent(context, emergencyContact, message)
+    }
+
+    /**
+     * Shows high-priority system notification: "Help is on the way!"
+     */
+    fun showHelpOnTheWayNotification(context: Context, contactPhone: String) {
+        try {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val notification = androidx.core.app.NotificationCompat.Builder(context, com.lifeguard.app.fcm.LifeGuardFirebaseService.CHANNEL_ID_ALERTS)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle("🆘 Help is on the way!")
+                .setContentText("Emergency SMS & live GPS sent automatically to $contactPhone")
+                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle()
+                    .bigText("Help is on the way! Your emergency alert and live GPS location have been dispatched to your contact ($contactPhone). Stay safe."))
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
+                .setDefaults(android.app.Notification.DEFAULT_ALL)
+                .setAutoCancel(true)
+                .build()
+
+            manager.notify(9999, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Notification failed: ${e.message}")
+        }
     }
 
     /**

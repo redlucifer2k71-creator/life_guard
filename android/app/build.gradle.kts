@@ -13,8 +13,8 @@ android {
         applicationId = "com.lifeguard.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -86,6 +86,9 @@ dependencies {
     // Google Maps SDK + Compose integration
     implementation("com.google.android.gms:play-services-maps:18.2.0")
     implementation("com.google.maps.android:maps-compose:4.3.3")
+
+    // OpenStreetMap 2D native Android SDK (100% Free & Open-Source)
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
 
     // OkHttp for Directions API calls (already have OkHttp via Retrofit)
     implementation("com.google.code.gson:gson:2.10.1")
