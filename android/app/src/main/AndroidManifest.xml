@@ -22,7 +22,6 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Needed on Android 12+ to schedule exact alarms for timer check-in -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <!-- Required to show PIN challenge activity over lock screen -->
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
@@ -47,6 +46,19 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Route Import from Google Maps Share Sheet -->
+        <activity
+            android:name=".route.RouteImportActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 

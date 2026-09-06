@@ -321,9 +321,21 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(16.dp))
 
         // ── Route Deviation Guard Card ──
+        var isRouteMonitoringActive by remember {
+            mutableStateOf(RouteDeviationService.isRouteActive(context))
+        }
+
         RouteGuardCard(
-            isRouteActive = RouteDeviationService.isRouteActive(context),
-            onOpenMap = onNavigateToRoute
+            isRouteActive = isRouteMonitoringActive,
+            onOpenMap = onNavigateToRoute,
+            onStopMonitoring = {
+                val stopIntent = Intent(context, RouteDeviationService::class.java).apply {
+                    action = RouteDeviationService.ACTION_STOP
+                }
+                context.stopService(stopIntent)
+                isRouteMonitoringActive = false
+                Toast.makeText(context, "Route monitoring stopped", Toast.LENGTH_SHORT).show()
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -549,43 +561,79 @@ private fun TimerCheckInCard(
 @Composable
 private fun RouteGuardCard(
     isRouteActive: Boolean,
-    onOpenMap: () -> Unit
+    onOpenMap: () -> Unit,
+    onStopMonitoring: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = if (isRouteActive) Color(0x1A4CAF50) else Color(0xFF1A1A1A),
-        onClick = onOpenMap
+        color = if (isRouteActive) Color(0x1A4CAF50) else Color(0xFF1E1E1E)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("🗺️", fontSize = 20.sp)
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Route Deviation Guard",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = if (isRouteActive) "Active — Monitoring deviation (>150m triggers SOS)" else "Tap to set route on Google Maps",
-                        color = if (isRouteActive) Color(0xFF4CAF50) else Color(0xFF888888),
-                        fontSize = 11.sp
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("🗺️", fontSize = 22.sp)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Route Deviation Guard",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isRouteActive) "Active — Monitoring GPS (>150m triggers SOS)" else "Share route from Google Maps to Life Guard",
+                            color = if (isRouteActive) Color(0xFF4CAF50) else Color(0xFF888888),
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
-            Text("→", color = Color(0xFF888888), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (isRouteActive) {
+                Button(
+                    onClick = onStopMonitoring,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF333333)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                ) {
+                    Text("STOP ROUTE MONITORING", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { com.lifeguard.app.route.GoogleMapsSharingHelper.openGoogleMaps(context) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f).height(40.dp)
+                    ) {
+                        Text("📍 Open Google Maps", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onOpenMap,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF888888)),
+                        modifier = Modifier.height(40.dp)
+                    ) {
+                        Text("In-App Map", fontSize = 11.sp)
+                    }
+                }
+            }
         }
     }
 }

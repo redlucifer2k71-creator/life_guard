@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
 import com.lifeguard.app.data.LocationUpdateRequest
+import com.lifeguard.app.data.UserSession
 import com.lifeguard.app.network.NetworkClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,25 @@ class LocationTrackingService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun requestLocationUpdates() {
+        // 1. Immediately read last known location from Fused Provider
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                if (loc != null) {
+                    Log.i(TAG, "Immediate cached location retrieved: Lat=${loc.latitude}, Lng=${loc.longitude}")
+                    UserSession.saveLocation(this@LocationTrackingService, loc.latitude, loc.longitude)
+                    sendLocationToBackend(loc.latitude, loc.longitude, loc.speed, loc.bearing)
+                } else {
+                    querySystemLocationManager()
+                }
+            }.addOnFailureListener {
+                querySystemLocationManager()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Cached location error: ${e.message}")
+            querySystemLocationManager()
+        }
+
+        // 2. Request ongoing high-accuracy updates
         val locationRequest = LocationRequest.Builder(
             Priority.PRIORITY_HIGH_ACCURACY, 
             10000L // 10 seconds interval
@@ -92,6 +112,24 @@ class LocationTrackingService : Service() {
             Log.i(TAG, "Location updates requested successfully (10s interval)")
         } catch (e: SecurityException) {
             Log.e(TAG, "Location permission missing: ${e.message}")
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun querySystemLocationManager() {
+        try {
+            val locationManager = getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+                ?: return
+            val lastGps = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+            val lastNet = locationManager.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+            val bestLoc = lastGps ?: lastNet
+            if (bestLoc != null) {
+                Log.i(TAG, "System LocationManager fix: Lat=${bestLoc.latitude}, Lng=${bestLoc.longitude}")
+                UserSession.saveLocation(this, bestLoc.latitude, bestLoc.longitude)
+                sendLocationToBackend(bestLoc.latitude, bestLoc.longitude, bestLoc.speed, bestLoc.bearing)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "System location query failed: ${e.message}")
         }
     }
 

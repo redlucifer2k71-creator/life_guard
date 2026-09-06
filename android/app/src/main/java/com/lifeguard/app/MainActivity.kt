@@ -1,6 +1,7 @@
 package com.lifeguard.app
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -114,6 +115,17 @@ class MainActivity : ComponentActivity() {
         val hasSms = ContextCompat.checkSelfPermission(
             this, Manifest.permission.SEND_SMS
         ) == PackageManager.PERMISSION_GRANTED
+
+        val locationManager = getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
+        val isGpsEnabled = locationManager?.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) == true
+        if (!isGpsEnabled) {
+            Toast.makeText(this, "⚠️ Please turn ON device GPS for Life Guard tracking", Toast.LENGTH_LONG).show()
+            try {
+                startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            } catch (e: Exception) {
+                // Ignore if settings intent unavailable
+            }
+        }
 
         if (hasFine && hasSms) {
             startLocationService()
