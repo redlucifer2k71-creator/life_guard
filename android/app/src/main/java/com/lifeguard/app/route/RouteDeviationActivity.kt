@@ -124,13 +124,15 @@ class RouteDeviationActivity : ComponentActivity() {
             try {
                 val lat = UserSession.getLastLatitude(this@RouteDeviationActivity)
                 val lng = UserSession.getLastLongitude(this@RouteDeviationActivity)
+                val senderToken = UserSession.getFcmToken(this@RouteDeviationActivity)
                 val response = NetworkClient.apiService.triggerAlert(
                     AlertTriggerRequest(
                         userId = userId,
                         alertType = "ROUTE_DEVIATION",
                         latitude = lat,
                         longitude = lng,
-                        radiusMeters = 500.0
+                        radiusMeters = 1000.0,
+                        senderFcmToken = senderToken
                     )
                 )
                 val count = if (response.isSuccessful) response.body()?.totalRecipientsNotified ?: 0 else 0

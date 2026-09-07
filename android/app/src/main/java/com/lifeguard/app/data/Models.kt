@@ -23,7 +23,8 @@ data class AlertTriggerRequest(
     @SerializedName("alert_type") val alertType: String,
     @SerializedName("latitude") val latitude: Double,
     @SerializedName("longitude") val longitude: Double,
-    @SerializedName("radius_meters") val radiusMeters: Double = 500.0
+    @SerializedName("radius_meters") val radiusMeters: Double = 1000.0,
+    @SerializedName("sender_fcm_token") val senderFcmToken: String? = null
 )
 
 data class AlertTriggerResponse(

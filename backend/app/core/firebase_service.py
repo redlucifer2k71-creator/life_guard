@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 try:
     import firebase_admin
     from firebase_admin import credentials, messaging
+    import base64
     FIREBASE_AVAILABLE = True
 except ImportError:
     FIREBASE_AVAILABLE = False
@@ -43,31 +44,63 @@ def _init_firebase() -> bool:
     if _firebase_initialized:
         return True
 
-    # Look for credentials in order of preference:
-    # 1. FIREBASE_CREDENTIALS_PATH env var
-    # 2. GOOGLE_APPLICATION_CREDENTIALS env var (standard GCP)
-    # 3. backend/app/core/firebase-service-account.json
+    # 1. First priority: Direct JSON string in environment variable (Render / Cloud deployment)
+    raw_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
+    if not raw_json and os.getenv("FIREBASE_CREDENTIALS_BASE64"):
+        try:
+            raw_json = base64.b64decode(os.getenv("FIREBASE_CREDENTIALS_BASE64")).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Failed to decode FIREBASE_CREDENTIALS_BASE64: {e}")
 
+    if raw_json and raw_json.strip():
+        try:
+            cred_dict = json.loads(raw_json)
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            _firebase_initialized = True
+            logger.info("Firebase Admin SDK initialized successfully from environment variable")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase from JSON environment variable: {e}")
+
+    # 2. Second priority: Local or configured file path
     creds_path = (
         os.getenv("FIREBASE_CREDENTIALS_PATH")
         or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         or os.path.join(os.path.dirname(__file__), "firebase-service-account.json")
     )
 
-    if not os.path.exists(creds_path):
-        logger.warning(f"Firebase credentials not found at: {creds_path}")
-        logger.warning("FCM push notifications are disabled. See backend/app/core/firebase_service.py for setup.")
-        return False
+    if os.path.exists(creds_path):
+        try:
+            cred = credentials.Certificate(creds_path)
+            firebase_admin.initialize_app(cred)
+            _firebase_initialized = True
+            logger.info(f"Firebase Admin SDK initialized successfully from file: {creds_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase from file {creds_path}: {e}")
+            return False
 
-    try:
-        cred = credentials.Certificate(creds_path)
-        firebase_admin.initialize_app(cred)
-        _firebase_initialized = True
-        logger.info("Firebase Admin SDK initialized successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to initialize Firebase: {e}")
-        return False
+    logger.warning(
+        f"Firebase credentials not found (checked FIREBASE_CREDENTIALS_JSON env var and path: {creds_path}). "
+        "FCM push notifications are disabled."
+    )
+    return False
+
+
+def is_firebase_configured() -> dict:
+    """Check if Firebase Admin SDK is ready to send notifications."""
+    ready = _init_firebase()
+    return {
+        "firebase_available": FIREBASE_AVAILABLE,
+        "firebase_configured": ready,
+        "credentials_source": (
+            "environment_json" if os.getenv("FIREBASE_CREDENTIALS_JSON")
+            else "environment_b64" if os.getenv("FIREBASE_CREDENTIALS_BASE64")
+            else "file_path" if ready
+            else "none"
+        )
+    }
 
 
 def send_sos_push_to_token(

@@ -72,19 +72,7 @@ class MainActivity : ComponentActivity() {
 
         // Register FCM token with backend if already logged in
         if (UserSession.isLoggedIn(this)) {
-            val userId = UserSession.getUserId(this)
-            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-                UserSession.saveFcmToken(this, token)
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        NetworkClient.apiService.registerFcmToken(
-                            FcmTokenRequest(userId = userId, fcmToken = token)
-                        )
-                    } catch (e: Exception) {
-                        android.util.Log.w("MainActivity", "FCM token upload failed: ${e.message}")
-                    }
-                }
-            }
+            UserSession.syncFcmTokenWithBackend(this)
         }
 
         // Request exact alarm permission for timer check-ins (Android 12+)
@@ -135,11 +123,15 @@ class MainActivity : ComponentActivity() {
             this, Manifest.permission.CALL_PHONE
         ) == PackageManager.PERMISSION_GRANTED
 
+        val hasNotif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        } else true
+
         if (hasFine || hasCoarse) {
             startLocationService()
         }
 
-        if (!hasFine || !hasCoarse || !hasSms || !hasCall) {
+        if (!hasFine || !hasCoarse || !hasSms || !hasCall || !hasNotif) {
             val perms = mutableListOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,

@@ -145,10 +145,20 @@ def update_fcm_token(payload: FcmTokenUpdateRequest, db: Session = Depends(get_d
             detail=f"Active user with ID {payload.user_id} not found.",
         )
 
-    user.fcm_token = payload.fcm_token
+    # Maintain comma-separated list of active device tokens for this user
+    incoming_token = payload.fcm_token.strip()
+    existing_tokens = [t.strip() for t in (user.fcm_token or "").split(",") if t.strip()]
+    
+    if incoming_token in existing_tokens:
+        # Move to end (most recently active)
+        existing_tokens.remove(incoming_token)
+    existing_tokens.append(incoming_token)
+    
+    # Retain the most recent 5 device tokens
+    user.fcm_token = ",".join(existing_tokens[-5:])
     db.commit()
 
     return FcmTokenUpdateResponse(
         status="success",
-        message=f"FCM token updated for user {payload.user_id}",
+        message=f"FCM token updated for user {payload.user_id} (active devices: {len(existing_tokens[-5:])})",
     )

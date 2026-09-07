@@ -913,6 +913,7 @@ private fun verifyPin(context: Context, enteredPin: String): Boolean {
 private suspend fun triggerSosAlert(context: Context, userId: Long, alertType: String) {
     val lat = UserSession.getLastLatitude(context)
     val lng = UserSession.getLastLongitude(context)
+    val senderToken = UserSession.getFcmToken(context)
     try {
         val response = NetworkClient.apiService.triggerAlert(
             AlertTriggerRequest(
@@ -920,7 +921,8 @@ private suspend fun triggerSosAlert(context: Context, userId: Long, alertType: S
                 alertType = alertType,
                 latitude = lat,
                 longitude = lng,
-                radiusMeters = 500.0
+                radiusMeters = 1000.0,
+                senderFcmToken = senderToken
             )
         )
         val recipientsCount = if (response.isSuccessful) response.body()?.totalRecipientsNotified ?: 0 else 0

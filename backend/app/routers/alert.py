@@ -125,22 +125,42 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
 
         db.commit()
 
-        # ── Send FCM push notifications to all nearby recipients ──
+        # ── Send FCM push notifications to all recipients and registered devices ──
         # Best-effort: we don't fail the request if FCM has issues
-        tokens_with_fcm = [r for r in recipients if r.fcm_token]
-        if tokens_with_fcm:
+        fcm_destinations: List[tuple[str, float]] = []  # (token, distance_m)
+        sender_token = (payload.sender_fcm_token or "").strip()
+
+        # 1. Add tokens from nearby community recipients (unpack comma-separated tokens)
+        for r in recipients:
+            if r.fcm_token:
+                for tok in r.fcm_token.split(","):
+                    tok = tok.strip()
+                    if tok and tok != sender_token and tok not in [d[0] for d in fcm_destinations]:
+                        fcm_destinations.append((tok, r.distance_meters))
+
+        # 2. Multi-device support: also notify other active devices of the victim
+        # (e.g. user logged into 2 phones, tablet, or testing with same account)
+        if victim.fcm_token:
+            for tok in victim.fcm_token.split(","):
+                tok = tok.strip()
+                if tok and tok != sender_token and tok not in [d[0] for d in fcm_destinations]:
+                    fcm_destinations.append((tok, 0.0))
+
+        if fcm_destinations:
+            tokens_to_send = [d[0] for d in fcm_destinations]
+            distances_to_send = [d[1] for d in fcm_destinations]
             fcm_result = send_sos_push_to_multiple(
-                fcm_tokens=[r.fcm_token for r in tokens_with_fcm],
+                fcm_tokens=tokens_to_send,
                 alert_type=payload.alert_type.value,
                 victim_name=victim.full_name,
-                distances_m=[r.distance_meters for r in tokens_with_fcm],
+                distances_m=distances_to_send,
                 latitude=payload.latitude,
                 longitude=payload.longitude,
                 alert_id=alert_id,
             )
             logger.info(
                 f"FCM push: {fcm_result['sent']} sent, {fcm_result['failed']} failed "
-                f"out of {len(tokens_with_fcm)} recipients"
+                f"out of {len(fcm_destinations)} device tokens"
             )
 
         return AlertTriggerResponse(
@@ -220,3 +240,10 @@ def resolve_alert(payload: AlertResolveRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to resolve alert: {str(e)}",
         )
+
+
+@router.get("/fcm-status")
+def get_fcm_status():
+    """Diagnostic endpoint to verify Firebase Admin SDK initialization and cloud configuration."""
+    from app.core.firebase_service import is_firebase_configured
+    return is_firebase_configured()

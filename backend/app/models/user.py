@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, func
+from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, func
 from app.core.database import Base
 
 
@@ -9,7 +9,7 @@ class User(Base):
     phone_number = Column(String(20), unique=True, nullable=False, index=True)
     full_name = Column(String(100), nullable=False)
     pin_hash = Column(String(255), nullable=False)
-    fcm_token = Column(String(500), nullable=True)
+    fcm_token = Column(Text, nullable=True)
     emergency_contact_phone = Column(String(20), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

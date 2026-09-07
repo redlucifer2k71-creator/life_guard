@@ -1,5 +1,7 @@
 package com.lifeguard.app.ui
 
+import android.content.Intent
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -29,6 +31,7 @@ import com.lifeguard.app.data.LoginRequest
 import com.lifeguard.app.data.PinHasher
 import com.lifeguard.app.data.UserSession
 import com.lifeguard.app.network.NetworkClient
+import com.lifeguard.app.service.LocationTrackingService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -230,6 +233,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit, onGoToRegister: () -> Unit) {
 
                                     if (last10Entered == last10Known && knownPinHash.isNotBlank() && PinHasher.verify(pin, knownPinHash)) {
                                         UserSession.setLoggedIn(context, true)
+                                        UserSession.syncFcmTokenWithBackend(context)
+                                        startLocationService(context)
                                         Toast.makeText(context, "⚡ Fast-Pass Login: Welcome back!", Toast.LENGTH_SHORT).show()
                                         onLoginSuccess()
 
@@ -265,6 +270,8 @@ fun LoginScreen(onLoginSuccess: () -> Unit, onGoToRegister: () -> Unit) {
                                             if (response.isSuccessful && response.body() != null) {
                                                 val pinHash = PinHasher.hash(pin)
                                                 UserSession.saveUser(context, response.body()!!.user, pinHash)
+                                                UserSession.syncFcmTokenWithBackend(context)
+                                                startLocationService(context)
                                                 Toast.makeText(context, "Login successful!", Toast.LENGTH_SHORT).show()
                                                 onLoginSuccess()
                                             } else {
@@ -386,5 +393,20 @@ fun LoginScreen(onLoginSuccess: () -> Unit, onGoToRegister: () -> Unit) {
             },
             containerColor = Color(0xFF222222)
         )
+    }
+}
+
+private fun startLocationService(context: android.content.Context) {
+    try {
+        val intent = Intent(context, LocationTrackingService::class.java).apply {
+            action = LocationTrackingService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("LoginScreen", "Unable to start location service: ${e.message}")
     }
 }

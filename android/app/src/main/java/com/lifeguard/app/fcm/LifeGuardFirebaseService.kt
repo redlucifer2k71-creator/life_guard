@@ -1,11 +1,15 @@
 package com.lifeguard.app.fcm
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -56,7 +60,15 @@ class LifeGuardFirebaseService : FirebaseMessagingService() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-                // High importance channel for incoming SOS alerts
+                val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+                val audioAttributes = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .build()
+
+                // High importance channel for incoming SOS alerts with siren sound and vibration
                 val alertChannel = NotificationChannel(
                     CHANNEL_ID_ALERTS,
                     "🆘 SOS Alerts",
@@ -64,8 +76,10 @@ class LifeGuardFirebaseService : FirebaseMessagingService() {
                 ).apply {
                     description = "Incoming emergency SOS alerts from nearby community members"
                     enableVibration(true)
-                    vibrationPattern = longArrayOf(0, 300, 100, 300, 100, 300)
+                    vibrationPattern = longArrayOf(0, 400, 200, 400, 200, 400)
                     enableLights(true)
+                    setSound(soundUri, audioAttributes)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
 
                 // Low importance channel for system messages (token registered, etc.)
@@ -93,27 +107,7 @@ class LifeGuardFirebaseService : FirebaseMessagingService() {
         UserSession.saveFcmToken(applicationContext, token)
 
         // Register with backend if user is logged in
-        val userId = UserSession.getUserId(applicationContext)
-        if (userId != -1L) {
-            registerTokenWithBackend(userId, token)
-        }
-    }
-
-    private fun registerTokenWithBackend(userId: Long, token: String) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = NetworkClient.apiService.registerFcmToken(
-                    FcmTokenRequest(userId = userId, fcmToken = token)
-                )
-                if (response.isSuccessful) {
-                    Log.i(TAG, "FCM token registered with backend for user $userId")
-                } else {
-                    Log.w(TAG, "FCM token registration failed: HTTP ${response.code()}")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "FCM token registration error: ${e.message}")
-            }
-        }
+        UserSession.syncFcmTokenWithBackend(applicationContext)
     }
 
     // ── Message Handling ──
@@ -158,10 +152,23 @@ class LifeGuardFirebaseService : FirebaseMessagingService() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createNotificationChannels(this)
 
+        // Wake screen for 5 seconds on emergency SOS
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val wl = pm?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "LifeGuard:SosWakeLock"
+            )
+            wl?.acquire(5000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "WakeLock error: ${e.message}")
+        }
+
         val notifId = notifIdCounter++
 
         // Format distance
         val distanceStr = when {
+            distanceM <= 1.0 -> "in immediate area"
             distanceM < 1000 -> "${distanceM.toInt()}m away"
             else -> "${"%.1f".format(distanceM / 1000)}km away"
         }
@@ -200,19 +207,26 @@ class LifeGuardFirebaseService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID_ALERTS)
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(alertTitle)
             .setContentText("$victimName needs help · $distanceStr")
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("$victimName needs help!\n📍 $distanceStr\n🚨 Alert type: $alertType")
+                    .bigText("$victimName needs help!\n📍 Location: $distanceStr\n🚨 Alert type: $alertType")
             )
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
-            .setVibrate(longArrayOf(0, 300, 100, 300, 100, 300))
+            .setSound(soundUri)
+            .setDefaults(Notification.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVibrate(longArrayOf(0, 400, 200, 400, 200, 400))
             .setContentIntent(openPendingIntent)
+            .setFullScreenIntent(openPendingIntent, true)
             .addAction(
                 android.R.drawable.ic_menu_directions,
                 "Navigate to ${victimName.split(" ").first()}",

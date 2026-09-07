@@ -2,6 +2,13 @@ package com.lifeguard.app.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import com.google.firebase.messaging.FirebaseMessaging
+import com.lifeguard.app.fcm.FcmTokenRequest
+import com.lifeguard.app.network.NetworkClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 object UserSession {
     private const val PREFS_NAME = "lifeguard_session"
@@ -95,6 +102,38 @@ object UserSession {
 
     fun getFcmToken(context: Context): String? =
         prefs(context).getString(KEY_FCM_TOKEN, null)
+
+    /** Sync device FCM token to backend for communal emergency SOS delivery. */
+    fun syncFcmTokenWithBackend(context: Context) {
+        val userId = getUserId(context)
+        if (userId == -1L) return
+
+        try {
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                if (!token.isNullOrBlank()) {
+                    saveFcmToken(context, token)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try {
+                            val response = NetworkClient.apiService.registerFcmToken(
+                                FcmTokenRequest(userId = userId, fcmToken = token)
+                            )
+                            if (response.isSuccessful) {
+                                Log.i("UserSession", "FCM token successfully registered with backend for user $userId")
+                            } else {
+                                Log.w("UserSession", "FCM token registration returned HTTP ${response.code()}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("UserSession", "FCM token upload failed: ${e.message}")
+                        }
+                    }
+                }
+            }.addOnFailureListener { e ->
+                Log.w("UserSession", "Failed to retrieve FCM token: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e("UserSession", "FirebaseMessaging error: ${e.message}")
+        }
+    }
 
     /** Onboarding — shown only on first launch. */
     fun hasSeenOnboarding(context: Context): Boolean =

@@ -1,5 +1,7 @@
 package com.lifeguard.app.ui
 
+import android.content.Intent
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -26,6 +28,7 @@ import com.lifeguard.app.data.PinHasher
 import com.lifeguard.app.data.RegisterRequest
 import com.lifeguard.app.data.UserSession
 import com.lifeguard.app.network.NetworkClient
+import com.lifeguard.app.service.LocationTrackingService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -307,6 +310,8 @@ fun RegisterScreen(onRegisterSuccess: () -> Unit, onGoToLogin: () -> Unit) {
                                             if (response.isSuccessful && response.body() != null) {
                                                 val pinHash = PinHasher.hash(pin.trim())
                                                 UserSession.saveUser(context, response.body()!!.user, pinHash)
+                                                UserSession.syncFcmTokenWithBackend(context)
+                                                startLocationService(context)
                                                 Toast.makeText(context, "Account ready! Logged in.", Toast.LENGTH_SHORT).show()
                                                 onRegisterSuccess()
                                             } else {
@@ -360,5 +365,20 @@ fun RegisterScreen(onRegisterSuccess: () -> Unit, onGoToLogin: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+private fun startLocationService(context: android.content.Context) {
+    try {
+        val intent = Intent(context, LocationTrackingService::class.java).apply {
+            action = LocationTrackingService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("RegisterScreen", "Unable to start location service: ${e.message}")
     }
 }
