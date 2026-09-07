@@ -160,14 +160,22 @@ fun PinChallengeDialog(
                                         when (key) {
                                             "⌫" -> if (pin.isNotEmpty()) pin = pin.dropLast(1)
                                             "✓" -> {
-                                                if (pin.length >= 4) {
+                                                if (pin.length == 6) {
                                                     onSuccess(pin)
                                                 } else {
                                                     shakeError = true
                                                     pin = ""
                                                 }
                                             }
-                                            else -> if (pin.length < 6) pin += key
+                                            else -> {
+                                                if (pin.length < 6) {
+                                                    val nextPin = pin + key
+                                                    pin = nextPin
+                                                    if (nextPin.length == 6) {
+                                                        onSuccess(nextPin)
+                                                    }
+                                                }
+                                            }
                                         }
                                     },
                                     modifier = Modifier.size(64.dp),

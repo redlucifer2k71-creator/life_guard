@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 class UserRegisterRequest(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=100, description="Full name of the user")
     phone_number: str = Field(..., min_length=10, max_length=20, description="Phone number")
-    pin: str = Field(..., min_length=4, max_length=6, description="4 to 6 digit secret PIN")
+    pin: str = Field(..., min_length=6, max_length=6, description="Strictly 6-digit numeric secret PIN")
     emergency_contact_phone: Optional[str] = Field(None, description="Primary emergency contact phone")
     fcm_token: Optional[str] = Field(None, description="Firebase Cloud Messaging device token")
 

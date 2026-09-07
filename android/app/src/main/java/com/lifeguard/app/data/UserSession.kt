@@ -14,6 +14,8 @@ object UserSession {
     private const val KEY_LAST_LNG = "last_longitude"
     private const val KEY_FCM_TOKEN = "fcm_token"
     private const val KEY_EMERGENCY_CONTACT = "emergency_contact"
+    private const val KEY_LAST_KNOWN_PHONE = "last_known_phone"
+    private const val KEY_LAST_KNOWN_PIN_HASH = "last_known_pin_hash"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -24,10 +26,26 @@ object UserSession {
             .putLong(KEY_USER_ID, user.id)
             .putString(KEY_FULL_NAME, user.fullName)
             .putString(KEY_PHONE, user.phoneNumber)
+            .putString(KEY_LAST_KNOWN_PHONE, user.phoneNumber)
             .putString(KEY_EMERGENCY_CONTACT, user.emergencyContactPhone ?: "")
             .putBoolean(KEY_LOGGED_IN, true)
-            .apply { if (pinHash.isNotBlank()) putString(KEY_PIN_HASH, pinHash) }
+            .apply {
+                if (pinHash.isNotBlank()) {
+                    putString(KEY_PIN_HASH, pinHash)
+                    putString(KEY_LAST_KNOWN_PIN_HASH, pinHash)
+                }
+            }
             .apply()
+    }
+
+    fun getLastKnownPhone(context: Context): String =
+        prefs(context).getString(KEY_LAST_KNOWN_PHONE, prefs(context).getString(KEY_PHONE, "") ?: "") ?: ""
+
+    fun getLastKnownPinHash(context: Context): String =
+        prefs(context).getString(KEY_LAST_KNOWN_PIN_HASH, prefs(context).getString(KEY_PIN_HASH, "") ?: "") ?: ""
+
+    fun setLoggedIn(context: Context, loggedIn: Boolean) {
+        prefs(context).edit().putBoolean(KEY_LOGGED_IN, loggedIn).apply()
     }
 
     fun getUserId(context: Context): Long = prefs(context).getLong(KEY_USER_ID, -1L)
@@ -104,13 +122,21 @@ object UserSession {
     }
 
     fun logout(context: Context) {
-        // Preserve onboarding seen flag and server_url across logouts
+        // Preserve onboarding seen flag, server_url, and last known credentials across logouts
         val seenOnboarding = hasSeenOnboarding(context)
         val serverUrl = getServerUrl(context)
         val callmebot = getCallMeBotApiKey(context)
+        val lastPhone = getLastKnownPhone(context)
+        val lastPinHash = getLastKnownPinHash(context)
         prefs(context).edit().clear().apply()
         if (seenOnboarding) markOnboardingSeen(context)
         setServerUrl(context, serverUrl)
         setCallMeBotApiKey(context, callmebot)
+        if (lastPhone.isNotBlank()) {
+            prefs(context).edit()
+                .putString(KEY_LAST_KNOWN_PHONE, lastPhone)
+                .putString(KEY_LAST_KNOWN_PIN_HASH, lastPinHash)
+                .apply()
+        }
     }
 }

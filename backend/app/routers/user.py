@@ -20,18 +20,49 @@ def hash_pin(pin: str) -> str:
     return hashlib.sha256((pin + salt).encode("utf-8")).hexdigest()
 
 
+import re
+from sqlalchemy import or_
+
+def extract_last_10_digits(phone: str) -> str:
+    """Extract digits and return the last 10 digits for country-code-agnostic matching."""
+    digits = re.sub(r"\D", "", phone)
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def find_user_by_phone(db: Session, raw_phone: str) -> User | None:
+    """Finds user by exact phone, or by matching the last 10 digits (ignoring +91, 0, spaces)."""
+    user = db.query(User).filter(User.phone_number == raw_phone).first()
+    if user:
+        return user
+    last10 = extract_last_10_digits(raw_phone)
+    if len(last10) == 10:
+        return db.query(User).filter(User.phone_number.like(f"%{last10}")).first()
+    return None
+
+
 @router.post("/register", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
 def register_user(payload: UserRegisterRequest, db: Session = Depends(get_db)):
-    """Register a new user with hashed PIN and initial credentials."""
+    """Register a new user or update existing user's 6-digit PIN and credentials."""
     try:
-        existing_user = db.query(User).filter(User.phone_number == payload.phone_number).first()
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this phone number is already registered.",
-            )
-
+        existing_user = find_user_by_phone(db, payload.phone_number)
         pin_hash = hash_pin(payload.pin)
+
+        if existing_user:
+            # User already exists: update credentials & PIN seamlessly
+            existing_user.full_name = payload.full_name
+            existing_user.pin_hash = pin_hash
+            if payload.emergency_contact_phone:
+                existing_user.emergency_contact_phone = payload.emergency_contact_phone
+            if payload.fcm_token:
+                existing_user.fcm_token = payload.fcm_token
+            existing_user.is_active = True
+            db.commit()
+            db.refresh(existing_user)
+            return UserRegisterResponse(
+                status="success",
+                message="Account updated and PIN reset successfully",
+                user=UserResponse.model_validate(existing_user),
+            )
 
         new_user = User(
             full_name=payload.full_name,
@@ -63,20 +94,20 @@ def register_user(payload: UserRegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=UserLoginResponse)
 def login_user(payload: UserLoginRequest, db: Session = Depends(get_db)):
-    """Authenticate user with phone number and PIN."""
+    """Authenticate user with phone number (fuzzy 10-digit match) and PIN."""
     try:
-        user = db.query(User).filter(User.phone_number == payload.phone_number).first()
+        user = find_user_by_phone(db, payload.phone_number)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid phone number or PIN.",
+                detail="Phone number not registered. Please register your account.",
             )
 
         provided_hash = hash_pin(payload.pin)
         if provided_hash != user.pin_hash:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid phone number or PIN.",
+                detail="Invalid secret PIN. If you forgot your PIN, simply re-register to reset it.",
             )
 
         return UserLoginResponse(

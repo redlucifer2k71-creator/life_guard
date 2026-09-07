@@ -13,8 +13,8 @@ android {
         applicationId = "com.lifeguard.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "7.0"
+        versionCode = 8
+        versionName = "8.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
