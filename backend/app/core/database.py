@@ -12,21 +12,20 @@ raw_url = os.getenv(
 if raw_url.startswith("mysql://"):
     raw_url = "mysql+pymysql://" + raw_url[len("mysql://"):]
 
-# Sanitize query parameters (PyMySQL does not accept ?ssl-mode=REQUIRED)
+# Sanitize query parameters for PyMySQL (PyMySQL expects SSL in connect_args, not in query string)
 connect_args = {}
 if "?" in raw_url:
     parsed = urlparse(raw_url)
     qs = parse_qs(parsed.query)
     
-    # If cloud SSL was requested in the URL
-    if any(k in qs for k in ("ssl-mode", "ssl_mode", "ssl")):
+    ssl_keys = ("ssl-mode", "ssl_mode", "ssl", "ssl_verify_cert", "ssl_verify_identity", "ssl_ca")
+    if any(k in qs for k in ssl_keys):
         connect_args["ssl"] = {}
-        # Remove unsupported query parameters
-        clean_qs = {k: v for k, v in qs.items() if k not in ("ssl-mode", "ssl_mode", "ssl")}
+        clean_qs = {k: v for k, v in qs.items() if k not in ssl_keys}
         clean_query = urlencode(clean_qs, doseq=True)
         raw_url = urlunparse(parsed._replace(query=clean_query))
 
-# Auto-enable SSL for cloud databases (Aiven, AWS, etc.)
+# Auto-enable SSL for cloud databases (TiDB, Aiven, AWS, etc.)
 if "localhost" not in raw_url and "127.0.0.1" not in raw_url:
     connect_args["ssl"] = {}
 
