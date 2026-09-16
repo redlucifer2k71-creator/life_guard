@@ -1,4 +1,4 @@
-﻿# Sensitive Keys & Credentials
+# Sensitive Keys & Credentials
 backend/app/core/firebase-service-account.json
 android/app/google-services.json
 .env

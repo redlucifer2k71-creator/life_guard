@@ -1,11 +1,11 @@
-from sqlalchemy import Column, BigInteger, String, Boolean, DateTime, Text, func
+from sqlalchemy import Column, BigInteger, Integer, String, Boolean, DateTime, Text, func
 from app.core.database import Base
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, index=True, autoincrement=True)
     phone_number = Column(String(20), unique=True, nullable=False, index=True)
     full_name = Column(String(100), nullable=False)
     pin_hash = Column(String(255), nullable=False)

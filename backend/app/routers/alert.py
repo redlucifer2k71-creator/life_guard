@@ -40,61 +40,104 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
                 detail=f"Active user with ID {payload.user_id} not found.",
             )
 
-        wkt_point = f"POINT({payload.longitude} {payload.latitude})"
+        is_sqlite = db.bind.dialect.name == "sqlite"
 
-        # Insert Alert into alerts table
-        insert_alert_query = text("""
-            INSERT INTO alerts (user_id, alert_type, status, latitude, longitude, location_point, triggered_at)
-            VALUES (
-                :user_id, 
-                :alert_type, 
-                'ACTIVE', 
-                :latitude, 
-                :longitude, 
-                ST_SRID(ST_PointFromText(:wkt_point), 4326), 
-                NOW()
-            );
-        """)
+        if is_sqlite:
+            from app.routers.location import haversine_distance_meters
+            result = db.execute(
+                text("""
+                    INSERT INTO alerts (user_id, alert_type, status, latitude, longitude, triggered_at)
+                    VALUES (:user_id, :alert_type, 'ACTIVE', :latitude, :longitude, datetime('now'));
+                """),
+                {
+                    "user_id": payload.user_id,
+                    "alert_type": payload.alert_type.value,
+                    "latitude": payload.latitude,
+                    "longitude": payload.longitude,
+                },
+            )
+            db.commit()
+            alert_id = result.lastrowid
 
-        result = db.execute(
-            insert_alert_query,
-            {
-                "user_id": payload.user_id,
-                "alert_type": payload.alert_type.value,
-                "latitude": payload.latitude,
-                "longitude": payload.longitude,
-                "wkt_point": wkt_point,
-            },
-        )
-        db.commit()
+            rows = db.execute(
+                text("""
+                    SELECT 
+                        u.id AS user_id,
+                        u.full_name,
+                        u.phone_number,
+                        u.fcm_token,
+                        ul.latitude,
+                        ul.longitude
+                    FROM user_locations ul
+                    JOIN users u ON ul.user_id = u.id
+                    WHERE u.id != :victim_id
+                      AND u.is_active = 1;
+                """),
+                {"victim_id": payload.user_id},
+            ).mappings().all()
 
-        # Get generated alert_id
-        alert_id = result.lastrowid
+            nearby_rows = []
+            for r in rows:
+                dist = haversine_distance_meters(
+                    payload.latitude, payload.longitude,
+                    float(r["latitude"]), float(r["longitude"])
+                )
+                if dist <= payload.radius_meters:
+                    r_dict = dict(r)
+                    r_dict["distance_meters"] = dist
+                    nearby_rows.append(r_dict)
+            nearby_rows.sort(key=lambda x: x["distance_meters"])
+        else:
+            wkt_point = f"POINT({payload.longitude} {payload.latitude})"
+            insert_alert_query = text("""
+                INSERT INTO alerts (user_id, alert_type, status, latitude, longitude, location_point, triggered_at)
+                VALUES (
+                    :user_id, 
+                    :alert_type, 
+                    'ACTIVE', 
+                    :latitude, 
+                    :longitude, 
+                    ST_SRID(ST_PointFromText(:wkt_point), 4326), 
+                    NOW()
+                );
+            """)
 
-        # Perform MySQL spatial query to locate nearby users within radius (100m to 1000m)
-        spatial_query = text("""
-            SELECT 
-                u.id AS user_id,
-                u.full_name,
-                u.phone_number,
-                u.fcm_token,
-                ST_Distance_Sphere(ul.location_point, ST_SRID(ST_PointFromText(:wkt_point), 4326)) AS distance_meters
-            FROM user_locations ul
-            JOIN users u ON ul.user_id = u.id
-            WHERE u.id != :victim_id
-              AND u.is_active = 1
-              AND ST_Distance_Sphere(ul.location_point, ST_SRID(ST_PointFromText(:wkt_point), 4326)) <= :radius_meters
-            ORDER BY distance_meters ASC;
-        """)
+            result = db.execute(
+                insert_alert_query,
+                {
+                    "user_id": payload.user_id,
+                    "alert_type": payload.alert_type.value,
+                    "latitude": payload.latitude,
+                    "longitude": payload.longitude,
+                    "wkt_point": wkt_point,
+                },
+            )
+            db.commit()
+            alert_id = result.lastrowid
 
-        nearby_rows = db.execute(
-            spatial_query,
-            {
-                "victim_id": payload.user_id,
-                "wkt_point": wkt_point,
-                "radius_meters": payload.radius_meters,
-            },
-        ).mappings().all()
+            spatial_query = text("""
+                SELECT 
+                    u.id AS user_id,
+                    u.full_name,
+                    u.phone_number,
+                    u.fcm_token,
+                    ST_Distance_Sphere(ul.location_point, ST_SRID(ST_PointFromText(:wkt_point), 4326)) AS distance_meters
+                FROM user_locations ul
+                JOIN users u ON ul.user_id = u.id
+                WHERE u.id != :victim_id
+                  AND u.is_active = 1
+                  AND ST_Distance_Sphere(ul.location_point, ST_SRID(ST_PointFromText(:wkt_point), 4326)) <= :radius_meters
+                ORDER BY distance_meters ASC;
+            """)
+
+            nearby_rows = db.execute(
+                spatial_query,
+                {
+                    "victim_id": payload.user_id,
+                    "wkt_point": wkt_point,
+                    "radius_meters": payload.radius_meters,
+                },
+            ).mappings().all()
 
         recipients: List[NotifiedRecipient] = []
         for row in nearby_rows:
@@ -110,9 +153,10 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
             )
 
             # Log recipient in alert_recipients table
-            log_recipient_query = text("""
+            time_fn = "datetime('now')" if is_sqlite else "NOW()"
+            log_recipient_query = text(f"""
                 INSERT INTO alert_recipients (alert_id, recipient_user_id, distance_meters, delivery_status, notified_at)
-                VALUES (:alert_id, :recipient_user_id, :distance_meters, 'SENT', NOW());
+                VALUES (:alert_id, :recipient_user_id, :distance_meters, 'SENT', {time_fn});
             """)
             db.execute(
                 log_recipient_query,
@@ -217,9 +261,10 @@ def resolve_alert(payload: AlertResolveRequest, db: Session = Depends(get_db)):
             )
 
         # Update alert status to CANCELLED_BY_PIN
-        update_query = text("""
+        time_fn = "datetime('now')" if db.bind.dialect.name == "sqlite" else "NOW()"
+        update_query = text(f"""
             UPDATE alerts 
-            SET status = 'CANCELLED_BY_PIN', resolved_at = NOW() 
+            SET status = 'CANCELLED_BY_PIN', resolved_at = {time_fn} 
             WHERE id = :alert_id;
         """)
         db.execute(update_query, {"alert_id": payload.alert_id})

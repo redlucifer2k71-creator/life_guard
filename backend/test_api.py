@@ -19,7 +19,7 @@ def test_full_sos_flow():
     res_alice = client.post("/api/v1/users/register", json={
         "full_name": "Alice Smith (Victim)",
         "phone_number": "+1111111111",
-        "pin": "1234",
+        "pin": "123456",
         "emergency_contact_phone": "+1999999999",
         "fcm_token": "fcm_token_alice"
     })
@@ -32,7 +32,7 @@ def test_full_sos_flow():
     res_bob = client.post("/api/v1/users/register", json={
         "full_name": "Bob Johnson (Responder)",
         "phone_number": "+2222222222",
-        "pin": "5678",
+        "pin": "567890",
         "emergency_contact_phone": "+1888888888",
         "fcm_token": "fcm_token_bob"
     })
@@ -89,11 +89,11 @@ def test_full_sos_flow():
     assert res_sos.status_code == 201
     alert_id = res_sos.json()["alert_id"]
 
-    # 8. Resolve Alert with PIN Verification ("1234")
+    # 8. Resolve Alert with PIN Verification ("123456")
     res_resolve = client.post("/api/v1/alerts/resolve", json={
         "alert_id": alert_id,
         "user_id": alice_id,
-        "pin": "1234"
+        "pin": "123456"
     })
     print(f"\n8. POST /api/v1/alerts/resolve -> Status: {res_resolve.status_code}")
     print(f"   Response: {res_resolve.json()}")
