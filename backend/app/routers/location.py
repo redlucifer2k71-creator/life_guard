@@ -34,6 +34,19 @@ def update_location(payload: LocationUpdateRequest, db: Session = Depends(get_db
     is_sqlite = db.bind.dialect.name == "sqlite"
 
     try:
+        from app.models.user import User
+        user = db.query(User).filter(User.id == payload.user_id).first()
+        if not user:
+            user = User(
+                id=payload.user_id,
+                full_name=f"Community User #{payload.user_id}",
+                phone_number=f"user_{payload.user_id}",
+                pin_hash="",
+                is_active=True,
+            )
+            db.add(user)
+            db.commit()
+
         if is_sqlite:
             db.execute(
                 text("""

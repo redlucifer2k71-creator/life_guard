@@ -32,13 +32,19 @@ def hash_pin(pin: str) -> str:
 def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
     """Trigger an emergency SOS alert, insert spatial alert record, and query nearby community members."""
     try:
-        # Verify user exists
-        victim = db.query(User).filter(User.id == payload.user_id, User.is_active == True).first()
+        # Verify user exists (auto-create fallback so alert never fails after container reboot)
+        victim = db.query(User).filter(User.id == payload.user_id).first()
         if not victim:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Active user with ID {payload.user_id} not found.",
+            victim = User(
+                id=payload.user_id,
+                full_name=f"Protected User #{payload.user_id}",
+                phone_number=f"user_{payload.user_id}",
+                pin_hash="",
+                is_active=True,
             )
+            db.add(victim)
+            db.commit()
+            db.refresh(victim)
 
         # 1. Resolve effective victim location (use last known location if payload coordinates are (0,0))
         v_lat = payload.latitude
@@ -98,20 +104,32 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
             db.commit()
             alert_id = result.lastrowid
 
-        # 2. Query ALL active registered community helpers (LEFT JOIN so helpers without fresh GPS are not omitted)
+        # 2. Query ALL active registered community helpers and any active location reports
         rows = db.execute(
             text("""
+                SELECT 
+                    COALESCE(u.id, ul.user_id) AS user_id,
+                    COALESCE(u.full_name, 'Community Member #' || ul.user_id) AS full_name,
+                    COALESCE(u.phone_number, 'Unknown') AS phone_number,
+                    u.fcm_token,
+                    ul.latitude,
+                    ul.longitude
+                FROM user_locations ul
+                LEFT JOIN users u ON ul.user_id = u.id
+                WHERE (u.id IS NULL OR (u.id != :victim_id AND u.is_active = 1))
+                  AND ul.user_id != :victim_id
+                UNION
                 SELECT 
                     u.id AS user_id,
                     u.full_name,
                     u.phone_number,
                     u.fcm_token,
-                    ul.latitude,
-                    ul.longitude
+                    NULL AS latitude,
+                    NULL AS longitude
                 FROM users u
-                LEFT JOIN user_locations ul ON ul.user_id = u.id
                 WHERE u.id != :victim_id
-                  AND u.is_active = 1;
+                  AND u.is_active = 1
+                  AND u.id NOT IN (SELECT user_id FROM user_locations);
             """),
             {"victim_id": payload.user_id},
         ).mappings().all()

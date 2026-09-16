@@ -138,12 +138,18 @@ class FcmTokenUpdateResponse(BaseModel):
 @router.post("/fcm-token", response_model=FcmTokenUpdateResponse)
 def update_fcm_token(payload: FcmTokenUpdateRequest, db: Session = Depends(get_db)):
     """Register or update a device's FCM push notification token for a user."""
-    user = db.query(User).filter(User.id == payload.user_id, User.is_active == True).first()
+    user = db.query(User).filter(User.id == payload.user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Active user with ID {payload.user_id} not found.",
+        user = User(
+            id=payload.user_id,
+            full_name=f"Community User #{payload.user_id}",
+            phone_number=f"user_{payload.user_id}",
+            pin_hash="",
+            is_active=True,
         )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
     # Maintain comma-separated list of active device tokens for this user
     incoming_token = payload.fcm_token.strip()
