@@ -59,6 +59,39 @@ fun HomeScreen(
     val userId = remember { UserSession.getUserId(context) }
     val userName = remember { UserSession.getFullName(context) }
 
+    // Proactively acquire fresh location and ensure FCM token is registered on screen display
+    LaunchedEffect(Unit) {
+        try {
+            val fusedClient = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+            val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val hasCoarse = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+            if (hasFine || hasCoarse) {
+                fusedClient.lastLocation.addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        UserSession.saveLocation(context, loc.latitude, loc.longitude)
+                    }
+                }
+                val cts = com.google.android.gms.tasks.CancellationTokenSource()
+                fusedClient.getCurrentLocation(
+                    com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                    cts.token
+                ).addOnSuccessListener { loc ->
+                    if (loc != null) {
+                        UserSession.saveLocation(context, loc.latitude, loc.longitude)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "HomeScreen initial location fetch error: ${e.message}")
+        }
+        UserSession.syncFcmTokenWithBackend(context)
+    }
+
     // Guard mode gesture states
     var isGuardModeActive by remember { mutableStateOf(false) }
     var showPinDialog by remember { mutableStateOf(false) }
@@ -911,8 +944,32 @@ private fun verifyPin(context: Context, enteredPin: String): Boolean {
 }
 
 private suspend fun triggerSosAlert(context: Context, userId: Long, alertType: String) {
-    val lat = UserSession.getLastLatitude(context)
-    val lng = UserSession.getLastLongitude(context)
+    var lat = UserSession.getLastLatitude(context)
+    var lng = UserSession.getLastLongitude(context)
+
+    // If cached GPS is (0,0), attempt a rapid fresh location fix
+    if (kotlin.math.abs(lat) < 0.0001 && kotlin.math.abs(lng) < 0.0001) {
+        try {
+            val fusedClient = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+            val hasFine = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val hasCoarse = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (hasFine || hasCoarse) {
+                val lastLoc = com.google.android.gms.tasks.Tasks.await(fusedClient.lastLocation)
+                if (lastLoc != null) {
+                    lat = lastLoc.latitude
+                    lng = lastLoc.longitude
+                    UserSession.saveLocation(context, lat, lng)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Quick GPS lookup before SOS failed: ${e.message}")
+        }
+    }
+
     val senderToken = UserSession.getFcmToken(context)
     try {
         val response = NetworkClient.apiService.triggerAlert(
@@ -921,7 +978,7 @@ private suspend fun triggerSosAlert(context: Context, userId: Long, alertType: S
                 alertType = alertType,
                 latitude = lat,
                 longitude = lng,
-                radiusMeters = 1000.0,
+                radiusMeters = 5000.0,
                 senderFcmToken = senderToken
             )
         )

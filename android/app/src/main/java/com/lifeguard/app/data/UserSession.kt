@@ -77,12 +77,33 @@ object UserSession {
     fun getStoredPinHash(context: Context): String =
         prefs(context).getString(KEY_PIN_HASH, "") ?: ""
 
-    /** Updated by LocationTrackingService on every GPS fix. */
+    /** Updated by LocationTrackingService & UI on every GPS fix. */
     fun saveLocation(context: Context, latitude: Double, longitude: Double) {
         prefs(context).edit()
             .putLong(KEY_LAST_LAT, java.lang.Double.doubleToRawLongBits(latitude))
             .putLong(KEY_LAST_LNG, java.lang.Double.doubleToRawLongBits(longitude))
             .apply()
+
+        // Automatically sync fresh location to backend whenever GPS is acquired
+        val userId = getUserId(context)
+        if (userId != -1L && (kotlin.math.abs(latitude) > 0.0001 || kotlin.math.abs(longitude) > 0.0001)) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    NetworkClient.apiService.updateLocation(
+                        LocationUpdateRequest(
+                            userId = userId,
+                            latitude = latitude,
+                            longitude = longitude,
+                            speed = 0f,
+                            heading = 0f
+                        )
+                    )
+                    Log.i("UserSession", "Auto-synced location to backend: ($latitude, $longitude)")
+                } catch (e: Exception) {
+                    Log.w("UserSession", "Background location sync failed: ${e.message}")
+                }
+            }
+        }
     }
 
     fun getLastLatitude(context: Context): Double {
