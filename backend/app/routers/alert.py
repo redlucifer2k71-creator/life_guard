@@ -40,10 +40,23 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
                 detail=f"Active user with ID {payload.user_id} not found.",
             )
 
+        # 1. Resolve effective victim location (use last known location if payload coordinates are (0,0))
+        v_lat = payload.latitude
+        v_lng = payload.longitude
+        if abs(v_lat) < 0.0001 and abs(v_lng) < 0.0001:
+            last_loc = db.execute(
+                text("SELECT latitude, longitude FROM user_locations WHERE user_id = :uid"),
+                {"uid": payload.user_id},
+            ).mappings().first()
+            if last_loc and (abs(float(last_loc["latitude"])) > 0.0001 or abs(float(last_loc["longitude"])) > 0.0001):
+                v_lat = float(last_loc["latitude"])
+                v_lng = float(last_loc["longitude"])
+                logger.info(f"Victim {payload.user_id} cached location fallback: ({v_lat}, {v_lng})")
+
         is_sqlite = db.bind.dialect.name == "sqlite"
+        from app.routers.location import haversine_distance_meters
 
         if is_sqlite:
-            from app.routers.location import haversine_distance_meters
             result = db.execute(
                 text("""
                     INSERT INTO alerts (user_id, alert_type, status, latitude, longitude, triggered_at)
@@ -52,43 +65,14 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
                 {
                     "user_id": payload.user_id,
                     "alert_type": payload.alert_type.value,
-                    "latitude": payload.latitude,
-                    "longitude": payload.longitude,
+                    "latitude": v_lat,
+                    "longitude": v_lng,
                 },
             )
             db.commit()
             alert_id = result.lastrowid
-
-            rows = db.execute(
-                text("""
-                    SELECT 
-                        u.id AS user_id,
-                        u.full_name,
-                        u.phone_number,
-                        u.fcm_token,
-                        ul.latitude,
-                        ul.longitude
-                    FROM user_locations ul
-                    JOIN users u ON ul.user_id = u.id
-                    WHERE u.id != :victim_id
-                      AND u.is_active = 1;
-                """),
-                {"victim_id": payload.user_id},
-            ).mappings().all()
-
-            nearby_rows = []
-            for r in rows:
-                dist = haversine_distance_meters(
-                    payload.latitude, payload.longitude,
-                    float(r["latitude"]), float(r["longitude"])
-                )
-                if dist <= payload.radius_meters:
-                    r_dict = dict(r)
-                    r_dict["distance_meters"] = dist
-                    nearby_rows.append(r_dict)
-            nearby_rows.sort(key=lambda x: x["distance_meters"])
         else:
-            wkt_point = f"POINT({payload.longitude} {payload.latitude})"
+            wkt_point = f"POINT({v_lng} {v_lat})"
             insert_alert_query = text("""
                 INSERT INTO alerts (user_id, alert_type, status, latitude, longitude, location_point, triggered_at)
                 VALUES (
@@ -101,43 +85,64 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
                     NOW()
                 );
             """)
-
             result = db.execute(
                 insert_alert_query,
                 {
                     "user_id": payload.user_id,
                     "alert_type": payload.alert_type.value,
-                    "latitude": payload.latitude,
-                    "longitude": payload.longitude,
+                    "latitude": v_lat,
+                    "longitude": v_lng,
                     "wkt_point": wkt_point,
                 },
             )
             db.commit()
             alert_id = result.lastrowid
 
-            spatial_query = text("""
+        # 2. Query ALL active registered community helpers (LEFT JOIN so helpers without fresh GPS are not omitted)
+        rows = db.execute(
+            text("""
                 SELECT 
                     u.id AS user_id,
                     u.full_name,
                     u.phone_number,
                     u.fcm_token,
-                    ST_Distance_Sphere(ul.location_point, ST_SRID(ST_PointFromText(:wkt_point), 4326)) AS distance_meters
-                FROM user_locations ul
-                JOIN users u ON ul.user_id = u.id
+                    ul.latitude,
+                    ul.longitude
+                FROM users u
+                LEFT JOIN user_locations ul ON ul.user_id = u.id
                 WHERE u.id != :victim_id
-                  AND u.is_active = 1
-                  AND ST_Distance_Sphere(ul.location_point, ST_SRID(ST_PointFromText(:wkt_point), 4326)) <= :radius_meters
-                ORDER BY distance_meters ASC;
-            """)
+                  AND u.is_active = 1;
+            """),
+            {"victim_id": payload.user_id},
+        ).mappings().all()
 
-            nearby_rows = db.execute(
-                spatial_query,
-                {
-                    "victim_id": payload.user_id,
-                    "wkt_point": wkt_point,
-                    "radius_meters": payload.radius_meters,
-                },
-            ).mappings().all()
+        nearby_candidates = []
+        for r in rows:
+            r_dict = dict(r)
+            r_lat = r["latitude"]
+            r_lng = r["longitude"]
+
+            if r_lat is not None and r_lng is not None and (abs(float(r_lat)) > 0.0001 or abs(float(r_lng)) > 0.0001) and (abs(v_lat) > 0.0001 or abs(v_lng) > 0.0001):
+                dist = haversine_distance_meters(v_lat, v_lng, float(r_lat), float(r_lng))
+            else:
+                # Proximity unknown / indoor emergency fix: mark as immediate community candidate
+                dist = 25.0
+
+            r_dict["distance_meters"] = dist
+            nearby_candidates.append(r_dict)
+
+        # Primary filter: within requested radius (default 5000m / 5km)
+        effective_radius = max(payload.radius_meters, 5000.0)
+        nearby_rows = [c for c in nearby_candidates if c["distance_meters"] <= effective_radius]
+
+        # Safety Fallback: If 0 helpers within radius, expand up to 25,000m (25km) or any registered helper
+        if not nearby_rows and nearby_candidates:
+            nearby_rows = [c for c in nearby_candidates if c["distance_meters"] <= 25000.0]
+            if not nearby_rows:
+                nearby_candidates.sort(key=lambda x: x["distance_meters"])
+                nearby_rows = nearby_candidates[:5]
+
+        nearby_rows.sort(key=lambda x: x["distance_meters"])
 
         recipients: List[NotifiedRecipient] = []
         for row in nearby_rows:
@@ -169,10 +174,26 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
 
         db.commit()
 
-        # ── Send FCM push notifications to all recipients and registered devices ──
-        # Best-effort: we don't fail the request if FCM has issues
-        fcm_destinations: List[tuple[str, float]] = []  # (token, distance_m)
+        # Multi-device fallback: If 0 other users found, but victim has other active devices
+        # (e.g. user logged into 2 phones with the same account during testing)
         sender_token = (payload.sender_fcm_token or "").strip()
+        victim_other_tokens = [
+            t.strip() for t in (victim.fcm_token or "").split(",")
+            if t.strip() and t.strip() != sender_token
+        ]
+        if not recipients and victim_other_tokens:
+            recipients.append(
+                NotifiedRecipient(
+                    user_id=victim.id,
+                    full_name=f"{victim.full_name} (Secondary Device)",
+                    phone_number=victim.phone_number,
+                    fcm_token=",".join(victim_other_tokens),
+                    distance_meters=0.0,
+                )
+            )
+
+        # ── Send FCM push notifications to all recipients and registered devices ──
+        fcm_destinations: List[tuple[str, float]] = []  # (token, distance_m)
 
         # 1. Add tokens from nearby community recipients (unpack comma-separated tokens)
         for r in recipients:
@@ -183,7 +204,6 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
                         fcm_destinations.append((tok, r.distance_meters))
 
         # 2. Multi-device support: also notify other active devices of the victim
-        # (e.g. user logged into 2 phones, tablet, or testing with same account)
         if victim.fcm_token:
             for tok in victim.fcm_token.split(","):
                 tok = tok.strip()
@@ -198,8 +218,8 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
                 alert_type=payload.alert_type.value,
                 victim_name=victim.full_name,
                 distances_m=distances_to_send,
-                latitude=payload.latitude,
-                longitude=payload.longitude,
+                latitude=v_lat,
+                longitude=v_lng,
                 alert_id=alert_id,
             )
             logger.info(
@@ -213,8 +233,8 @@ def trigger_alert(payload: AlertTriggerRequest, db: Session = Depends(get_db)):
             alert_type=payload.alert_type,
             alert_status=AlertStatusEnum.ACTIVE,
             triggered_at=datetime.utcnow(),
-            latitude=payload.latitude,
-            longitude=payload.longitude,
+            latitude=v_lat,
+            longitude=v_lng,
             total_recipients_notified=len(recipients),
             recipients=recipients,
         )
@@ -292,3 +312,30 @@ def get_fcm_status():
     """Diagnostic endpoint to verify Firebase Admin SDK initialization and cloud configuration."""
     from app.core.firebase_service import is_firebase_configured
     return is_firebase_configured()
+
+
+@router.get("/debug-status")
+def get_debug_status(db: Session = Depends(get_db)):
+    """Diagnostic endpoint to inspect live users, locations, and alerts."""
+    users = db.execute(text("SELECT id, full_name, phone_number, fcm_token, is_active FROM users")).mappings().all()
+    locations = db.execute(text("SELECT user_id, latitude, longitude, updated_at FROM user_locations")).mappings().all()
+    alerts = db.execute(text("SELECT id, user_id, alert_type, latitude, longitude, triggered_at FROM alerts ORDER BY id DESC LIMIT 5")).mappings().all()
+    from app.core.firebase_service import is_firebase_configured
+    return {
+        "firebase": is_firebase_configured(),
+        "total_users": len(users),
+        "users": [
+            {
+                "id": u["id"],
+                "full_name": u["full_name"],
+                "phone_number": u["phone_number"],
+                "has_fcm": bool(u["fcm_token"]),
+                "tokens_count": len([t for t in (u["fcm_token"] or "").split(",") if t.strip()]),
+                "is_active": bool(u["is_active"]),
+            }
+            for u in users
+        ],
+        "locations": [dict(l) for l in locations],
+        "recent_alerts": [dict(a) for a in alerts],
+    }
+

@@ -22,7 +22,7 @@ class AlertTriggerRequest(BaseModel):
     alert_type: AlertTypeEnum = Field(..., description="Type of SOS alert triggered")
     latitude: float = Field(..., ge=-90.0, le=90.0, description="Latitude of emergency")
     longitude: float = Field(..., ge=-180.0, le=180.0, description="Longitude of emergency")
-    radius_meters: float = Field(1000.0, ge=50.0, le=5000.0, description="Radius for community broadcast (50m - 5000m)")
+    radius_meters: float = Field(5000.0, ge=50.0, le=50000.0, description="Radius for community broadcast (50m - 50000m)")
     sender_fcm_token: Optional[str] = Field(None, description="FCM token of the sending device to avoid redundant self-alert")
 
 
